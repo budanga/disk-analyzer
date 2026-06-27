@@ -1,60 +1,60 @@
-# Analizador de Disco con IA
+# AI Disk Analyzer
 
-Herramienta en Python para el análisis de espacio en disco que genera reportes interactivos en formato HTML y proporciona recomendaciones inteligentes de limpieza mediante la API de Gemini de Google.
+A Python-based disk space analysis utility that generates interactive HTML reports and provides intelligent cleanup recommendations powered by Google's Gemini API.
 
-## Características
+## Features
 
-- **Análisis paralelo**: Traversal rápido de directorios optimizado mediante el uso de múltiples hilos (`concurrent.futures.ThreadPoolExecutor`) y lectura eficiente con `os.scandir`.
-- **Reporte visual interactivo**: Genera un dashboard en formato HTML autocompletado con gráficos de consumo, diagramas de anillo y desglose por categorías.
-- **Integración con IA**: Utiliza el SDK de Gemini (`google-genai`) para analizar la estructura de archivos del sistema y formular planes de acción específicos para liberar espacio.
-- **Robustez**: Omite de forma segura los archivos y directorios con restricciones de permisos u otros errores de lectura de E/S.
+- **Parallel Scanning**: Rapid directory traversal optimized using multiple threads (`concurrent.futures.ThreadPoolExecutor`) and efficient file scanning using `os.scandir`.
+- **Interactive Visual Dashboard**: Generates a high-quality HTML report featuring space usage charts, animated progress rings, and file category breakdowns.
+- **AI-Powered Insights**: Integrates Google's Gemini SDK (`google-genai`) to review storage distribution and construct specific space-saving recommendations.
+- **Robust Error Handling**: Safely skips system-restricted folders and files with read permissions or I/O errors without interrupting the scanning process.
 
-## Requisitos previos
+## Prerequisites
 
-Es necesario contar con Python 3.8 o superior y las siguientes bibliotecas:
+Python 3.8 or higher is required along with the following packages:
 
 ```bash
 pip install google-genai psutil
 ```
 
-## Configuración de la API Key de Gemini
+## Configuring the Gemini API Key
 
-Para utilizar el análisis inteligente con la IA de Gemini, es necesario configurar una clave de API. Puede obtener una de forma gratuita en [Google AI Studio](https://aistudio.google.com/apikey).
+To enable intelligent cleanup recommendations, you must configure a Gemini API key. You can get one for free at [Google AI Studio](https://aistudio.google.com/apikey).
 
-Existen dos opciones para configurar la clave:
+You can configure the key in one of two ways:
 
-### Opción 1: Variable de entorno (Recomendada)
-Configure la variable de entorno `GEMINI_API_KEY` con su clave de API:
+### Option 1: Environment Variable (Recommended)
+Set the `GEMINI_API_KEY` environment variable in your system session:
 
 - **Windows (PowerShell)**:
   ```powershell
-  $env:GEMINI_API_KEY="su_clave_aqui"
+  $env:GEMINI_API_KEY="your_api_key_here"
   ```
 - **Windows (CMD)**:
   ```cmd
-  set GEMINI_API_KEY=su_clave_aqui
+  set GEMINI_API_KEY=your_api_key_here
   ```
 - **Linux/macOS**:
   ```bash
-  export GEMINI_API_KEY="su_clave_aqui"
+  export GEMINI_API_KEY="your_api_key_here"
   ```
 
-### Opción 2: Edición del script
-Modifique el archivo `disk_analyzer.py` y reemplace la cadena `"TU_API_KEY_AQUI"` en la sección de configuración:
+### Option 2: Script Editing
+Edit the `disk_analyzer.py` script and replace `"YOUR_API_KEY_HERE"` with your API key:
 
 ```python
-API_KEY = os.environ.get("GEMINI_API_KEY", "su_clave_aqui")
+API_KEY = os.environ.get("GEMINI_API_KEY", "your_api_key_here")
 ```
 
-## Uso
+## Usage
 
-Ejecute el script desde la línea de comandos:
+Run the script from your terminal:
 
 ```bash
 python disk_analyzer.py
 ```
 
-Al finalizar el análisis, el script:
-1. Creará un directorio llamado `disk-analyzer-reports` dentro del directorio del proyecto (si no existe).
-2. Guardará el reporte HTML con el formato `reporte_disco_YYYYMMDD_HHMMSS.html` en dicha carpeta.
-3. Abrirá automáticamente el reporte en el navegador web predeterminado.
+Upon completion:
+1. The script creates a `disk-analyzer-reports` folder inside the project directory (if it does not exist).
+2. It saves the HTML report with the format `disk_report_YYYYMMDD_HHMMSS.html` in that folder.
+3. The report is automatically opened in your default web browser.

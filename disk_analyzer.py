@@ -1,15 +1,15 @@
 """
 disk_analyzer.py
-Analiza el espacio en disco de todos los discos del sistema y usa Gemini AI
-para generar recomendaciones de limpieza personalizadas.
+Analyzes disk space usage across all system drives and uses Gemini AI
+to generate personalized cleanup recommendations.
 
-Requisitos:
-    pip install google-generativeai psutil
+Requirements:
+    pip install google-genai psutil
 
-Configuración:
-    Reemplazá "TU_API_KEY_AQUI" con tu clave de Google AI Studio,
-    o definí la variable de entorno GEMINI_API_KEY.
-    Obtené tu key gratis en: https://aistudio.google.com/apikey
+Setup:
+    Replace "YOUR_API_KEY_HERE" with your Google AI Studio key,
+    or set the GEMINI_API_KEY environment variable.
+    Get a free key at: https://aistudio.google.com/apikey
 """
 
 import os
@@ -26,28 +26,28 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
 
-# ── Configuración ──────────────────────────────────────────────────────────────
-API_KEY = os.environ.get("GEMINI_API_KEY", "TU_API_KEY_AQUI")
+# ── Configuration ──────────────────────────────────────────────────────────────
+API_KEY = os.environ.get("GEMINI_API_KEY", "YOUR_API_KEY_HERE")
 
-# Tamaño mínimo de carpeta para incluirla en el análisis (en MB)
+# Minimum folder size to include in the analysis (in MB)
 MIN_FOLDER_SIZE_MB = 100
 
-# Top N carpetas más grandes por disco
+# Top N largest folders per drive
 TOP_N_FOLDERS = 20
 
-# Top N archivos más grandes del sistema
+# Top N largest files in the system
 TOP_N_FILES = 30
 
-# Extensiones típicamente seguras de revisar/eliminar
+# Extensions typically safe to review/delete
 CLEANUP_EXTENSIONS = {
-    "temporales":   [".tmp", ".temp", ".bak", ".old", ".orig"],
-    "logs":         [".log", ".log1", ".log2"],
-    "dumps":        [".dmp", ".mdmp", ".hdmp"],
-    "cache":        [".cache"],
-    "comprimidos":  [".zip", ".rar", ".7z", ".tar", ".gz"],
+    "temporary":   [".tmp", ".temp", ".bak", ".old", ".orig"],
+    "logs":        [".log", ".log1", ".log2"],
+    "dumps":       [".dmp", ".mdmp", ".hdmp"],
+    "cache":       [".cache"],
+    "archives":    [".zip", ".rar", ".7z", ".tar", ".gz"],
 }
 
-# Rutas a omitir completamente durante el escaneo
+# Paths to skip completely during scanning
 SKIP_PATHS = {
     "Windows", "System Volume Information", "$Recycle.Bin",
     "pagefile.sys", "hiberfil.sys", "swapfile.sys",
@@ -73,7 +73,7 @@ def bytes_to_human(n: int) -> str:
 
 
 def get_all_drives() -> list[str]:
-    """Devuelve la lista de raíces de disco locales disponibles en Windows."""
+    """Returns the list of local drive roots available in Windows."""
     if platform.system() == "Windows":
         import ctypes
         drives = []
@@ -88,7 +88,7 @@ def get_all_drives() -> list[str]:
             bitmask >>= 1
         return drives
     else:
-        # Linux / macOS: analizar desde la raíz
+        # Linux / macOS: analyze from root
         return ["/"]
 
 
@@ -109,12 +109,10 @@ def get_desktop_path() -> str:
         except Exception:
             pass
 
-    # Fallbacks comunes
+    # Common fallbacks
     candidates = [
-        os.path.join(home, "OneDrive", "Escritorio"),
         os.path.join(home, "OneDrive", "Desktop"),
         os.path.join(home, "Desktop"),
-        os.path.join(home, "Escritorio"),
     ]
     for candidate in candidates:
         if os.path.isdir(candidate):
@@ -131,7 +129,7 @@ def should_skip(path_str: str) -> bool:
     return False
 
 
-# ── Escaneo ────────────────────────────────────────────────────────────────────
+# ── Scanning ───────────────────────────────────────────────────────────────────
 
 def _scan_subtree(
     root_path: str,
@@ -253,20 +251,20 @@ def _scan_subtree(
 
 
 def scan_drive(drive_root: str) -> dict:
-    """Escanea un disco y recopila métricas en una única pasada."""
-    print(f"\n  Escaneando {drive_root} ...", flush=True)
+    """Scans a drive and collects metrics in a single pass."""
+    print(f"\n  Scanning {drive_root} ...", flush=True)
 
     usage = shutil.disk_usage(drive_root)
     result = {
-        "raiz": drive_root,
+        "root": drive_root,
         "total_gb":  round(usage.total / 1e9, 2),
-        "usado_gb":  round(usage.used  / 1e9, 2),
-        "libre_gb":  round(usage.free  / 1e9, 2),
-        "uso_pct":   round(usage.used / usage.total * 100, 1),
-        "carpetas_grandes": [],
-        "archivos_grandes": [],
-        "por_extension":    {},
-        "carpetas_temp":    [],
+        "used_gb":  round(usage.used  / 1e9, 2),
+        "free_gb":  round(usage.free  / 1e9, 2),
+        "use_pct":   round(usage.used / usage.total * 100, 1),
+        "large_folders": [],
+        "large_files": [],
+        "by_extension":    {},
+        "temp_folders":    [],
     }
 
     top_level_sizes: defaultdict[str, int] = defaultdict(int)
@@ -336,77 +334,77 @@ def scan_drive(drive_root: str) -> dict:
                     pass  # Individual subtree errors are silently skipped
             seen = len(current)
 
-    # Ordenar y procesar resultados
+    # Sort and process results
     sorted_top_folders = sorted(top_level_sizes.items(), key=lambda x: x[1], reverse=True)
-    result["carpetas_grandes"] = [
-        {"ruta": p, "tamanio": bytes_to_human(s)}
+    result["large_folders"] = [
+        {"path": p, "size": bytes_to_human(s)}
         for p, s in sorted_top_folders[:TOP_N_FOLDERS]
         if s >= MIN_FOLDER_SIZE_MB * 1e6
     ]
 
     big_files.sort(reverse=True)
-    result["archivos_grandes"] = [
-        {"ruta": p, "tamanio": bytes_to_human(s)}
+    result["large_files"] = [
+        {"path": p, "size": bytes_to_human(s)}
         for s, p in big_files[:TOP_N_FILES]
     ]
 
     sorted_temp_folders = sorted(temp_folder_sizes.items(), key=lambda x: x[1], reverse=True)
-    result["carpetas_temp"] = [
-        {"ruta": p, "tamanio": bytes_to_human(s)}
+    result["temp_folders"] = [
+        {"path": p, "size": bytes_to_human(s)}
         for p, s in sorted_temp_folders[:15]
         if s >= 10 * 1e6
     ]
 
-    # Extensiones: top 15 por tamaño
+    # Extensions: top 15 by size
     ext_sorted = sorted(ext_sizes.items(), key=lambda x: x[1], reverse=True)[:15]
-    result["por_extension"] = {
-        ext if ext else "(sin extensión)": bytes_to_human(sz)
+    result["by_extension"] = {
+        ext if ext else "(no extension)": bytes_to_human(sz)
         for ext, sz in ext_sorted
     }
 
     return result
 
 
-# ── Llamada a Gemini ───────────────────────────────────────────────────────────
+# ── Gemini API Call ────────────────────────────────────────────────────────────
 
 def ask_gemini(scan_data: dict) -> str:
     try:
         from google import genai
         from google.genai import types
     except ImportError:
-        print("\n[ERROR] El paquete 'google-genai' no está instalado.")
-        print("  Ejecutá:  pip install google-genai")
+        print("\n[ERROR] The 'google-genai' package is not installed.")
+        print("  Please run: pip install google-genai")
         sys.exit(1)
 
     try:
         client = genai.Client(api_key=API_KEY)
 
-        system_instruction = """Sos un experto en optimización de almacenamiento en Windows.
-Respondés SIEMPRE en español. Tus respuestas son breves, directas y bien estructuradas en markdown.
-Usás exactamente el formato que se te pide, sin agregar texto de relleno ni introducciones largas.
-No recomendás eliminar archivos del sistema operativo ni carpetas críticas de Windows."""
+        system_instruction = """You are an expert in Windows storage optimization.
+Always respond in English. Your responses must be brief, direct, and well-structured in markdown.
+Use exactly the format requested, without adding filler text or long introductions.
+Do not recommend deleting operating system files or critical Windows folders."""
 
-        user_prompt = f"""Analizá este reporte de disco y respondé de forma MUY CONCISA usando exactamente este formato markdown:
+        user_prompt = f"""Analyze this disk report and respond VERY CONCISELY using exactly this markdown format:
 
-## Estado de los discos
-Una línea por disco: `LETRA:` — X GB usados de Y GB (Z% libre) — estado (OK / Atención / Crítico).
+## Disk Status
+One line per disk: `LETTER:` — X GB used of Y GB (Z% free) — status (OK / Attention / Critical).
 
-## Top 5 acciones para liberar espacio
-Cada acción en este formato exacto:
-### N. Título corto de la acción
-- **Qué:** descripción en una oración
-- **Impacto:** ~X GB
-- **Seguridad:** ✅ Segura | ⚠️ Con precaución | 🔴 Revisión manual
+## Top 5 space saving actions
+Each action in this exact format:
+### N. Short action title
+- **What:** description in one sentence
+- **Impact:** ~X GB
+- **Safety:** ✅ Safe | ⚠️ With caution | 🔴 Manual review
 
-## Tips preventivos
-3 bullets cortos, máximo una línea cada uno.
+## Preventive tips
+3 short bullet points, maximum one line each.
 
 ---
-Datos del sistema:
+System data:
 {json.dumps(scan_data, ensure_ascii=False, indent=2)}
 """
 
-        print("\n  Consultando a Gemini AI...", flush=True)
+        print("\n  Querying Gemini AI...", flush=True)
         response = client.models.generate_content(
             model="gemini-2.5-flash",
             contents=user_prompt,
@@ -416,13 +414,12 @@ Datos del sistema:
         )
         return response.text
     except Exception as e:
-        print(f"\n[ERROR] Error al consultar a Gemini AI: {e}")
-        print("Se guardará el reporte sin las recomendaciones de la IA.")
-        return "No se pudieron obtener las recomendaciones de Gemini AI debido a un error en la API o cuota excedida."
+        print(f"\n[ERROR] Error querying Gemini AI: {e}")
+        print("Saving the report without AI recommendations.")
+        return "Could not retrieve Gemini AI recommendations due to an API error or quota limit exceeded."
 
 
-
-# ── Reporte HTML (Stitch Design System: Lumina Disk Intelligence) ──────────────
+# ── HTML Report (Stitch Design System: Lumina Disk Intelligence) ──────────────
 
 def _esc(s: str) -> str:
     """Escape a string for safe HTML insertion."""
@@ -460,17 +457,17 @@ def _donut_svg(pct: float, disk_label: str) -> str:
 </svg>"""
 
 
-def _table_rows(items: list, key_ruta: str = "ruta", key_size: str = "tamanio",
+def _table_rows(items: list, key_path: str = "path", key_size: str = "size",
                amber: bool = False) -> str:
     if not items:
-        return '<tr><td colspan="3" class="px-4 py-3 text-center text-on-surface-variant text-sm">Sin datos</td></tr>'
+        return '<tr><td colspan="3" class="px-4 py-3 text-center text-on-surface-variant text-sm">No data</td></tr>'
     rows = []
     for i, item in enumerate(items, 1):
         bg = "background:rgba(251,191,36,0.07);" if amber else ""
         rows.append(
             f'<tr class="data-table-row border-b border-white/5" style="{bg}">'
             f'<td class="px-4 py-2 text-on-surface-variant font-mono text-xs w-8">{i}</td>'
-            f'<td class="px-4 py-2 font-mono text-xs text-on-surface truncate max-w-lg" title="{_esc(item[key_ruta])}">{_esc(item[key_ruta])}</td>'
+            f'<td class="px-4 py-2 font-mono text-xs text-on-surface truncate max-w-lg" title="{_esc(item[key_path])}">{_esc(item[key_path])}</td>'
             f'<td class="px-4 py-2 font-mono text-xs text-right whitespace-nowrap" style="color:#adc6ff">{_esc(item[key_size])}</td>'
             f'</tr>'
         )
@@ -479,7 +476,7 @@ def _table_rows(items: list, key_ruta: str = "ruta", key_size: str = "tamanio",
 
 def _bar_chart(ext_dict: dict) -> str:
     if not ext_dict:
-        return '<p class="text-on-surface-variant text-sm">Sin datos</p>'
+        return '<p class="text-on-surface-variant text-sm">No data</p>'
     # Parse human sizes back to a comparable float for bar widths
     def _parse_size(s: str) -> float:
         parts = s.split()
@@ -518,10 +515,10 @@ def _bar_chart(ext_dict: dict) -> str:
 
 def _disk_section(disk: dict) -> str:
     """Render one full per-disk collapsible section."""
-    label = _esc(disk['raiz'])
-    uid   = disk['raiz'].replace("\\", "").replace(":", "").replace("/", "")
-    donut = _donut_svg(disk['uso_pct'], disk['raiz'])
-    pct   = disk['uso_pct']
+    label = _esc(disk['root'])
+    uid   = disk['root'].replace("\\", "").replace(":", "").replace("/", "")
+    donut = _donut_svg(disk['use_pct'], disk['root'])
+    pct   = disk['use_pct']
     if pct >= 80:
         pct_color = "#f87171"
     elif pct >= 60:
@@ -529,13 +526,13 @@ def _disk_section(disk: dict) -> str:
     else:
         pct_color = "#4edea3"
 
-    folders_html   = _table_rows(disk.get("carpetas_grandes", []))
-    files_html     = _table_rows(disk.get("archivos_grandes", []))
-    temp_html      = _table_rows(disk.get("carpetas_temp", []), amber=True)
-    ext_html       = _bar_chart(disk.get("por_extension", {}))
+    folders_html   = _table_rows(disk.get("large_folders", []))
+    files_html     = _table_rows(disk.get("large_files", []))
+    temp_html      = _table_rows(disk.get("temp_folders", []), amber=True)
+    ext_html       = _bar_chart(disk.get("by_extension", {}))
 
     return f"""
-<!-- ═══ DISCO {label} ═══ -->
+<!-- ═══ DRIVE {label} ═══ -->
 <section class="fade-in-up delay-200 glass-card rounded-xl overflow-hidden">
   <!-- Disk header -->
   <div class="flex items-center justify-between px-6 py-4 border-b border-white/10 cursor-pointer"
@@ -546,8 +543,8 @@ def _disk_section(disk: dict) -> str:
         <h2 class="font-mono font-bold text-xl text-on-surface">{label}</h2>
         <div class="flex gap-4 mt-1">
           <span class="text-xs font-mono text-on-surface-variant">Total: <b class="text-on-surface">{disk['total_gb']} GB</b></span>
-          <span class="text-xs font-mono text-on-surface-variant">Usado: <b style="color:{pct_color}">{disk['usado_gb']} GB ({pct}%)</b></span>
-          <span class="text-xs font-mono text-on-surface-variant">Libre: <b class="text-on-surface">{disk['libre_gb']} GB</b></span>
+          <span class="text-xs font-mono text-on-surface-variant">Used: <b style="color:{pct_color}">{disk['used_gb']} GB ({pct}%)</b></span>
+          <span class="text-xs font-mono text-on-surface-variant">Free: <b class="text-on-surface">{disk['free_gb']} GB</b></span>
         </div>
       </div>
     </div>
@@ -560,62 +557,62 @@ def _disk_section(disk: dict) -> str:
   <!-- Disk body -->
   <div id="body-{uid}" class="divide-y divide-white/5">
 
-    <!-- Carpetas grandes -->
+    <!-- Large folders -->
     <details open class="group">
       <summary class="flex items-center gap-2 px-6 py-3 cursor-pointer hover:bg-white/5 transition">
         <span class="text-lg">📁</span>
-        <span class="font-semibold text-on-surface">Carpetas más grandes</span>
+        <span class="font-semibold text-on-surface">Largest Folders</span>
         <span class="ml-auto material-symbols-outlined text-on-surface-variant group-open:rotate-180 transition-transform">expand_more</span>
       </summary>
       <div class="overflow-x-auto">
         <table class="w-full text-sm">
           <thead><tr class="text-left text-on-surface-variant text-xs uppercase tracking-wider border-b border-white/10">
-            <th class="px-4 py-2">#</th><th class="px-4 py-2">Ruta</th><th class="px-4 py-2 text-right">Tamaño</th>
+            <th class="px-4 py-2">#</th><th class="px-4 py-2">Path</th><th class="px-4 py-2 text-right">Size</th>
           </tr></thead>
           <tbody>{folders_html}</tbody>
         </table>
       </div>
     </details>
 
-    <!-- Archivos grandes -->
+    <!-- Large files -->
     <details class="group">
       <summary class="flex items-center gap-2 px-6 py-3 cursor-pointer hover:bg-white/5 transition">
         <span class="text-lg">📄</span>
-        <span class="font-semibold text-on-surface">Archivos más grandes (≥50 MB)</span>
+        <span class="font-semibold text-on-surface">Largest Files (≥50 MB)</span>
         <span class="ml-auto material-symbols-outlined text-on-surface-variant group-open:rotate-180 transition-transform">expand_more</span>
       </summary>
       <div class="overflow-x-auto">
         <table class="w-full text-sm">
           <thead><tr class="text-left text-on-surface-variant text-xs uppercase tracking-wider border-b border-white/10">
-            <th class="px-4 py-2">#</th><th class="px-4 py-2">Ruta</th><th class="px-4 py-2 text-right">Tamaño</th>
+            <th class="px-4 py-2">#</th><th class="px-4 py-2">Path</th><th class="px-4 py-2 text-right">Size</th>
           </tr></thead>
           <tbody>{files_html}</tbody>
         </table>
       </div>
     </details>
 
-    <!-- Temp/caché -->
+    <!-- Temp/cache -->
     <details class="group">
       <summary class="flex items-center gap-2 px-6 py-3 cursor-pointer hover:bg-white/5 transition">
         <span class="text-lg">🗑️</span>
-        <span class="font-semibold text-on-surface">Carpetas temp/caché detectadas</span>
+        <span class="font-semibold text-on-surface">Detected Temp/Cache Folders</span>
         <span class="ml-auto material-symbols-outlined text-on-surface-variant group-open:rotate-180 transition-transform">expand_more</span>
       </summary>
       <div class="overflow-x-auto">
         <table class="w-full text-sm">
           <thead><tr class="text-left text-on-surface-variant text-xs uppercase tracking-wider border-b border-white/10">
-            <th class="px-4 py-2">#</th><th class="px-4 py-2">Ruta</th><th class="px-4 py-2 text-right">Tamaño</th>
+            <th class="px-4 py-2">#</th><th class="px-4 py-2">Path</th><th class="px-4 py-2 text-right">Size</th>
           </tr></thead>
           <tbody>{temp_html}</tbody>
         </table>
       </div>
     </details>
 
-    <!-- Por extensión -->
+    <!-- By extension -->
     <details class="group">
       <summary class="flex items-center gap-2 px-6 py-3 cursor-pointer hover:bg-white/5 transition">
         <span class="text-lg">📊</span>
-        <span class="font-semibold text-on-surface">Espacio por extensión (top 15)</span>
+        <span class="font-semibold text-on-surface">Space by Extension (Top 15)</span>
         <span class="ml-auto material-symbols-outlined text-on-surface-variant group-open:rotate-180 transition-transform">expand_more</span>
       </summary>
       <div class="px-6 py-4">{ext_html}</div>
@@ -628,12 +625,12 @@ def _disk_section(disk: dict) -> str:
 def _format_recommendations(text: str) -> str:
     """
     Structured markdown-to-HTML renderer tailored to the Gemini prompt format:
-      ## Estado de los discos   → chip row
-      ## Top 5 …               → section heading
-      ### N. Título             → numbered action card
-      - **Key:** value         → key-value rows inside a card
-      ## Tips preventivos       → tips list
-      ---                      → ignored divider
+      ## Disk Status            → chip row
+      ## Top 5 …                → section heading
+      ### N. Title              → numbered action card
+      - **Key:** value          → key-value rows inside a card
+      ## Preventive Tips        → tips list
+      ---                       → ignored divider
     """
     import re
 
@@ -642,9 +639,9 @@ def _format_recommendations(text: str) -> str:
         s = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', s)
         s = re.sub(r'\*(.+?)\*',     r'<em>\1</em>',         s)
         # Replace safety emoji text with coloured badges
-        s = s.replace('✅ Segura',          '<span class="safety-badge safe">✅ Segura</span>')
-        s = s.replace('⚠️ Con precaución', '<span class="safety-badge warn">⚠️ Con precaución</span>')
-        s = s.replace('🔴 Revisión manual', '<span class="safety-badge danger">🔴 Revisión manual</span>')
+        s = s.replace('✅ Safe',          '<span class="safety-badge safe">✅ Safe</span>')
+        s = s.replace('⚠️ With caution', '<span class="safety-badge warn">⚠️ With Caution</span>')
+        s = s.replace('🔴 Manual review', '<span class="safety-badge danger">🔴 Manual Review</span>')
         return s
 
     # ── parse the text into a list of (kind, content) tokens ──────────────────
@@ -689,7 +686,7 @@ def _format_recommendations(text: str) -> str:
             _close_tips()
             current_section = content.lower()
 
-            if 'estado' in current_section:
+            if 'status' in current_section or 'estado' in current_section:
                 # Collect the disk status lines that follow as chip rows
                 out.append('<div class="mb-6">')
                 out.append(f'<h2 class="rec-h2">{_inline(content)}</h2>')
@@ -699,9 +696,9 @@ def _format_recommendations(text: str) -> str:
                     chip_text = _inline(tokens[i][1])
                     # colour chip border based on status keyword
                     cl = 'chip-ok'
-                    if 'atenci' in tokens[i][1].lower():
+                    if 'attention' in tokens[i][1].lower() or 'atenci' in tokens[i][1].lower() or 'warn' in tokens[i][1].lower():
                         cl = 'chip-warn'
-                    elif 'crít' in tokens[i][1].lower():
+                    elif 'critical' in tokens[i][1].lower() or 'crít' in tokens[i][1].lower() or 'crit' in tokens[i][1].lower():
                         cl = 'chip-danger'
                     out.append(f'<div class="disk-chip {cl}">{chip_text}</div>')
                     i += 1
@@ -714,7 +711,7 @@ def _format_recommendations(text: str) -> str:
         elif kind == 'h3':
             _close_card()
             _close_tips()
-            # Extract leading number if present: "1. Título"
+            # Extract leading number if present: "1. Title"
             m = re.match(r'^(\d+)\.\s*(.*)', content)
             if m:
                 num, title = m.group(1), m.group(2)
@@ -818,29 +815,29 @@ def _format_recommendations(text: str) -> str:
 
 
 def save_report(scan_data: dict, recommendations: str, output_path: str) -> str:
-    """Genera un reporte HTML premium y lo guarda en output_path."""
+    """Generates a premium HTML report and saves it to output_path."""
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     hostname = _esc(scan_data.get("sistema", "—"))
 
     # ── Summary cards (one per disk) ───────────────────────────────────────────
     summary_cards = []
     for disk in scan_data["discos"]:
-        pct = disk['uso_pct']
+        pct = disk['use_pct']
         if pct >= 80:
             pct_color = "#f87171"
         elif pct >= 60:
             pct_color = "#fbbf24"
         else:
             pct_color = "#4edea3"
-        donut = _donut_svg(pct, disk['raiz'])
+        donut = _donut_svg(pct, disk['root'])
         summary_cards.append(f"""
 <div class="glass-card rounded-xl p-6 flex flex-col items-center gap-3 hover:scale-105 transition-transform duration-300 fade-in-up">
-  <span class="font-mono font-bold text-2xl" style="color:#adc6ff">{_esc(disk['raiz'])}</span>
+  <span class="font-mono font-bold text-2xl" style="color:#adc6ff">{_esc(disk['root'])}</span>
   {donut}
   <div class="flex gap-2 flex-wrap justify-center mt-1">
     <span class="px-3 py-1 rounded-full text-xs font-mono" style="background:rgba(173,198,255,0.1);color:#adc6ff">Total: {disk['total_gb']} GB</span>
-    <span class="px-3 py-1 rounded-full text-xs font-mono" style="background:rgba(255,255,255,0.05);color:{pct_color}">Usado: {disk['usado_gb']} GB</span>
-    <span class="px-3 py-1 rounded-full text-xs font-mono" style="background:rgba(78,222,163,0.1);color:#4edea3">Libre: {disk['libre_gb']} GB</span>
+    <span class="px-3 py-1 rounded-full text-xs font-mono" style="background:rgba(255,255,255,0.05);color:{pct_color}">Used: {disk['used_gb']} GB</span>
+    <span class="px-3 py-1 rounded-full text-xs font-mono" style="background:rgba(78,222,163,0.1);color:#4edea3">Free: {disk['free_gb']} GB</span>
   </div>
 </div>""")
 
@@ -852,11 +849,11 @@ def save_report(scan_data: dict, recommendations: str, output_path: str) -> str:
 
     # ── Assemble full page ─────────────────────────────────────────────────────
     page = f"""<!DOCTYPE html>
-<html lang="es" class="dark">
+<html lang="en" class="dark">
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>Analizador de Disco con IA — Reporte</title>
+<title>AI Disk Analyzer — Report</title>
 <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
 <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
@@ -954,8 +951,8 @@ tailwind.config = {{
   <div class="flex items-center gap-3">
     <span class="material-symbols-outlined" style="color:#adc6ff;font-size:30px">hard_drive</span>
     <div>
-      <h1 class="font-bold text-xl text-white leading-tight">Analizador de Disco con IA</h1>
-      <p class="font-mono text-xs" style="color:#8c909f">Reporte generado el {ts}</p>
+      <h1 class="font-bold text-xl text-white leading-tight">AI Disk Analyzer</h1>
+      <p class="font-mono text-xs" style="color:#8c909f">Report generated on {ts}</p>
     </div>
   </div>
   <div class="flex items-center gap-4">
@@ -968,7 +965,7 @@ tailwind.config = {{
         <span class="ping absolute inline-flex h-full w-full rounded-full opacity-75" style="background:#4edea3"></span>
         <span class="relative inline-flex rounded-full h-2.5 w-2.5" style="background:#4edea3"></span>
       </span>
-      <span class="text-xs font-mono" style="color:#4edea3">Análisis completado</span>
+      <span class="text-xs font-mono" style="color:#4edea3">Analysis complete</span>
     </div>
   </div>
 </header>
@@ -988,7 +985,7 @@ tailwind.config = {{
   <div class="ai-card glass-card p-8 fade-in-up delay-400" style="background:rgba(20,20,35,0.7)">
     <div class="flex items-center gap-3 mb-6">
       <span class="text-3xl">✨</span>
-      <h2 class="text-xl font-bold" style="color:#d0bcff">Recomendaciones de Gemini AI</h2>
+      <h2 class="text-xl font-bold" style="color:#d0bcff">Gemini AI Recommendations</h2>
     </div>
     <div class="space-y-1 leading-relaxed">{ai_html}</div>
   </div>
@@ -997,7 +994,7 @@ tailwind.config = {{
 
 <!-- ══════════════════ FOOTER ══════════════════ -->
 <footer class="text-center py-6" style="border-top:1px solid rgba(255,255,255,0.05)">
-  <p class="font-mono text-xs" style="color:#424754">Generado por disk_analyzer.py con Gemini AI</p>
+  <p class="font-mono text-xs" style="color:#424754">Generated by disk_analyzer.py with Gemini AI</p>
 </footer>
 
 <script>
@@ -1039,18 +1036,18 @@ function toggleSection(uid) {{
 
 def main():
     print("=" * 60)
-    print("  ANALIZADOR DE DISCO CON IA")
+    print("  AI DISK ANALYZER")
     print("=" * 60)
 
-    if API_KEY == "TU_API_KEY_AQUI":
-        print("\n[ATENCION] No configuraste tu API key.")
-        print("  Edita el script y reemplaza TU_API_KEY_AQUI,")
-        print("  o defini la variable de entorno GEMINI_API_KEY.")
-        print("  -> Obtene tu clave gratis en: https://aistudio.google.com/apikey\n")
+    if API_KEY == "YOUR_API_KEY_HERE":
+        print("\n[WARNING] Gemini API key is not configured.")
+        print("  Edit the script and replace YOUR_API_KEY_HERE,")
+        print("  or define the GEMINI_API_KEY environment variable.")
+        print("  -> Get a free key at: https://aistudio.google.com/apikey\n")
         sys.exit(1)
 
     drives = get_all_drives()
-    print(f"\nDiscos encontrados: {', '.join(drives)}")
+    print(f"\nDrives found: {', '.join(drives)}")
 
     all_disks = []
     # Scan multiple drives in parallel when more than one drive exists
@@ -1062,42 +1059,42 @@ def main():
                 try:
                     all_disks.append(fut.result())
                 except Exception as e:
-                    print(f"  [!] No se pudo analizar {drive}: {e}")
+                    print(f"  [!] Could not analyze {drive}: {e}")
         # Preserve original drive order in the report
         drive_order = {d: i for i, d in enumerate(drives)}
-        all_disks.sort(key=lambda x: drive_order.get(x["raiz"], 999))
+        all_disks.sort(key=lambda x: drive_order.get(x["root"], 999))
     else:
         for drive in drives:
             try:
                 disk_data = scan_drive(drive)
                 all_disks.append(disk_data)
             except Exception as e:
-                print(f"  [!] No se pudo analizar {drive}: {e}")
+                print(f"  [!] Could not analyze {drive}: {e}")
 
     if not all_disks:
-        print("\n[ERROR] No se pudo analizar ningún disco.")
+        print("\n[ERROR] No drives could be analyzed.")
         sys.exit(1)
 
     scan_data = {
-        "sistema": platform.node(),
-        "fecha_analisis": datetime.now(timezone.utc).isoformat(),
+        "system": platform.node(),
+        "analysis_date": datetime.now(timezone.utc).isoformat(),
         "discos": all_disks,
     }
 
     recommendations = ask_gemini(scan_data)
 
-    # Guardar reporte HTML y abrirlo en el navegador
+    # Save HTML report and open in the browser
     script_dir = os.path.dirname(os.path.abspath(__file__))
     reports_dir = os.path.join(script_dir, "disk-analyzer-reports")
     os.makedirs(reports_dir, exist_ok=True)
     output_file = os.path.join(
         reports_dir,
-        f"reporte_disco_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
+        f"disk_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
     )
     save_report(scan_data, recommendations, output_file)
-    print(f"\n[OK] Reporte guardado en: {output_file}")
+    print(f"\n[OK] Report saved to: {output_file}")
     webbrowser.open(f"file:///{output_file.replace(os.sep, '/')}")
-    print("[OK] Reporte abierto en el navegador.")
+    print("[OK] Report opened in browser.")
 
 
 if __name__ == "__main__":
