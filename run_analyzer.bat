@@ -9,7 +9,7 @@ echo Starting parallel disk analysis...
 python "%~dp0disk_analyzer.py"
 
 if %ERRORLEVEL% neq 0 (
-    echo.
+    echo 
     echo An error occurred while running the script.
     pause
 )

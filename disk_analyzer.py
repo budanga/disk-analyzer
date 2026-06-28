@@ -393,13 +393,20 @@ def get_ollama_model() -> str:
             for i, m in enumerate(models, 1):
                 print(f"  {i}. {m['name']}")
             
+            gemini_option_idx = len(models) + 1
+            print(f"  {gemini_option_idx}. Use Gemini API (Skip Ollama)")
+            
             while True:
-                choice = input(f"Select a model (1-{len(models)}) [default 1]: ").strip()
+                choice = input(f"Select a model (1-{gemini_option_idx}) [default 1]: ").strip()
                 if not choice:
                     OLLAMA_MODEL = models[0]["name"]
                     break
-                if choice.isdigit() and 1 <= int(choice) <= len(models):
-                    OLLAMA_MODEL = models[int(choice)-1]["name"]
+                if choice.isdigit() and 1 <= int(choice) <= gemini_option_idx:
+                    selected_idx = int(choice)
+                    if selected_idx == gemini_option_idx:
+                        OLLAMA_MODEL = "GEMINI"
+                    else:
+                        OLLAMA_MODEL = models[selected_idx-1]["name"]
                     break
                 print("Invalid choice. Please try again.")
             
@@ -1146,8 +1153,11 @@ def main():
     ollama_ok = False
     try:
         model = get_ollama_model()
-        print(f"\n[INFO] Found local Ollama model: {model}")
-        ollama_ok = True
+        if model == "GEMINI":
+            print("\n[INFO] User selected Gemini API. Bypassing local models.")
+        else:
+            print(f"\n[INFO] Found local Ollama model: {model}")
+            ollama_ok = True
     except Exception as e:
         print(f"\n[INFO] Local Ollama not available or has no models: {e}")
 
