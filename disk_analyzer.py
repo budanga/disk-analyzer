@@ -1,15 +1,16 @@
 """
 disk_analyzer.py
-Analyzes disk space usage across all system drives and uses Gemini AI
-to generate personalized cleanup recommendations.
+Analyzes disk space usage across all system drives and uses Gemini AI or
+a local Ollama model to generate personalized cleanup recommendations.
 
 Requirements:
     pip install google-genai psutil
 
 Setup:
-    Replace "YOUR_API_KEY_HERE" with your Google AI Studio key,
+    By default, the script will attempt to use a local Ollama model (e.g. via localhost:11434).
+    If Ollama is not running, it will fall back to Gemini AI.
+    For Gemini setup: Replace "YOUR_API_KEY_HERE" with your Google AI Studio key,
     or set the GEMINI_API_KEY environment variable.
-    Get a free key at: https://aistudio.google.com/apikey
 """
 
 import os
@@ -28,6 +29,8 @@ from threading import Lock
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 API_KEY = os.environ.get("GEMINI_API_KEY", "YOUR_API_KEY_HERE")
+OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "")  # If empty, auto-detects first available local model
 
 # Minimum folder size to include in the analysis (in MB)
 MIN_FOLDER_SIZE_MB = 100
@@ -363,6 +366,106 @@ def scan_drive(drive_root: str) -> dict:
     }
 
     return result
+
+
+# ── Ollama Local AI Call ───────────────────────────────────────────────────────
+
+def get_ollama_model() -> str:
+    global OLLAMA_MODEL
+    import urllib.request
+    if OLLAMA_MODEL:
+        return OLLAMA_MODEL
+
+    url = f"{OLLAMA_HOST.rstrip('/')}/api/tags"
+    try:
+        req = urllib.request.Request(url, headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=5) as response:
+            data = json.loads(response.read().decode("utf-8"))
+            models = data.get("models", [])
+            if not models:
+                raise ValueError("No local models found in Ollama.")
+            
+            if len(models) == 1:
+                OLLAMA_MODEL = models[0]["name"]
+                return OLLAMA_MODEL
+            
+            print("\nAvailable Ollama models:")
+            for i, m in enumerate(models, 1):
+                print(f"  {i}. {m['name']}")
+            
+            while True:
+                choice = input(f"Select a model (1-{len(models)}) [default 1]: ").strip()
+                if not choice:
+                    OLLAMA_MODEL = models[0]["name"]
+                    break
+                if choice.isdigit() and 1 <= int(choice) <= len(models):
+                    OLLAMA_MODEL = models[int(choice)-1]["name"]
+                    break
+                print("Invalid choice. Please try again.")
+            
+            return OLLAMA_MODEL
+
+    except Exception as e:
+        raise RuntimeError(f"Could not connect to Ollama at {OLLAMA_HOST}: {e}")
+
+
+def ask_ollama(scan_data: dict) -> str:
+    import urllib.request
+    import urllib.error
+
+    model = get_ollama_model()
+
+    system_instruction = """You are an expert in Windows storage optimization.
+Always respond in English. Your responses must be brief, direct, and well-structured in markdown.
+Use exactly the format requested, without adding filler text or long introductions.
+Do not recommend deleting operating system files or critical Windows folders."""
+
+    user_prompt = f"""Analyze this disk report and respond VERY CONCISELY using exactly this markdown format:
+
+## Disk Status
+One line per disk: `LETTER:` — X GB used of Y GB (Z% free) — status (OK / Attention / Critical).
+
+## Top 5 space saving actions
+Each action in this exact format:
+### N. Short action title
+- **What:** description in one sentence
+- **Impact:** ~X GB
+- **Safety:** ✅ Safe | ⚠️ With caution | 🔴 Manual review
+
+## Preventive tips
+3 short bullet points, maximum one line each.
+
+---
+System data:
+{json.dumps(scan_data, ensure_ascii=False, indent=2)}
+"""
+
+    url = f"{OLLAMA_HOST.rstrip('/')}/api/chat"
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_instruction},
+            {"role": "user", "content": user_prompt}
+        ],
+        "options": {
+            "temperature": 0.2
+        },
+        "stream": False
+    }
+
+    print(f"\n  Querying local Ollama AI (model: {model})...", flush=True)
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"}
+    )
+    with urllib.request.urlopen(req, timeout=120) as response:
+        resp_data = json.loads(response.read().decode("utf-8"))
+        message = resp_data.get("message", {})
+        content = message.get("content", "")
+        if not content:
+            raise ValueError("Ollama returned an empty response.")
+        return content
 
 
 # ── Gemini API Call ────────────────────────────────────────────────────────────
@@ -1039,11 +1142,19 @@ def main():
     print("  AI DISK ANALYZER")
     print("=" * 60)
 
-    if API_KEY == "YOUR_API_KEY_HERE":
-        print("\n[WARNING] Gemini API key is not configured.")
-        print("  Edit the script and replace YOUR_API_KEY_HERE,")
-        print("  or define the GEMINI_API_KEY environment variable.")
-        print("  -> Get a free key at: https://aistudio.google.com/apikey\n")
+    # Check if a model is available (either Ollama local or Gemini API)
+    ollama_ok = False
+    try:
+        model = get_ollama_model()
+        print(f"\n[INFO] Found local Ollama model: {model}")
+        ollama_ok = True
+    except Exception as e:
+        print(f"\n[INFO] Local Ollama not available or has no models: {e}")
+
+    if not ollama_ok and API_KEY == "YOUR_API_KEY_HERE":
+        print("\n[ERROR] No AI configuration found.")
+        print("  - To use a local model, make sure Ollama is running and has at least one model downloaded.")
+        print("  - To use Gemini, edit the script to replace YOUR_API_KEY_HERE, or set the GEMINI_API_KEY environment variable.")
         sys.exit(1)
 
     drives = get_all_drives()
@@ -1081,7 +1192,19 @@ def main():
         "discos": all_disks,
     }
 
-    recommendations = ask_gemini(scan_data)
+    recommendations = ""
+    if ollama_ok:
+        try:
+            recommendations = ask_ollama(scan_data)
+        except Exception as e:
+            print(f"\n[WARNING] Failed to query Ollama: {e}")
+            if API_KEY != "YOUR_API_KEY_HERE":
+                print("Falling back to Gemini API...")
+                recommendations = ask_gemini(scan_data)
+            else:
+                recommendations = "Could not retrieve local Ollama recommendations due to an error, and Gemini API is not configured."
+    else:
+        recommendations = ask_gemini(scan_data)
 
     # Save HTML report and open in the browser
     script_dir = os.path.dirname(os.path.abspath(__file__))
