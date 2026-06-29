@@ -1526,11 +1526,47 @@ discos.forEach(disk => {{
     return page
 
 
+# ── Clean Reports ─────────────────────────────────────────────────────────────
+
+def clean_reports():
+    """Deletes all generated HTML reports from the reports directory."""
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    reports_dir = os.path.join(script_dir, "disk-analyzer-reports")
+    if not os.path.exists(reports_dir):
+        print(f"\n[INFO] Reports directory does not exist: {reports_dir}")
+        return
+
+    try:
+        files = [os.path.join(reports_dir, f) for f in os.listdir(reports_dir) if f.endswith(".html")]
+        if not files:
+            print(f"\n[INFO] No reports found to clean in: {reports_dir}")
+            return
+
+        print(f"\nFound {len(files)} reports to delete in {reports_dir}.")
+        deleted_count = 0
+        for f in files:
+            try:
+                os.remove(f)
+                deleted_count += 1
+            except Exception as e:
+                print(f"  [!] Failed to delete {os.path.basename(f)}: {e}")
+
+        print(f"[OK] Successfully deleted {deleted_count} reports.")
+    except Exception as e:
+        print(f"[ERROR] Failed to read reports directory: {e}")
+
+
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] in ("--clean", "clean", "-c"):
+        clean_reports()
+        sys.exit(0)
+
     print("=" * 60)
     print("  AI DISK ANALYZER")
+    print("=" * 60)
+    print("  (Run with '--clean' or 'clean' to delete generated HTML reports)")
     print("=" * 60)
 
     # Check if a model is available (either Ollama local or Gemini API)
