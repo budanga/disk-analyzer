@@ -60,11 +60,25 @@ def main():
         for d in args.drives:
             if not os.path.exists(d):
                 print(f"\n[ERROR] The specified drive/path does not exist: {d}")
+                if platform.system() == "Windows":
+                    print("  Note: Windows drive roots must include a colon and backslash (e.g., 'C:\\' instead of 'C').")
+                else:
+                    print("  Note: Specify absolute paths (e.g., '/' or '/home/user').")
+                available = scanner.get_all_drives()
+                if available:
+                    print(f"  Available drives on this system: {', '.join(available)}")
                 sys.exit(1)
             drives.append(os.path.abspath(d))
     elif args.path:
         if not os.path.exists(args.path):
             print(f"\n[ERROR] The specified path does not exist: {args.path}")
+            if platform.system() == "Windows":
+                print("  Note: Windows drive roots must include a colon and backslash (e.g., 'C:\\' instead of 'C').")
+            else:
+                print("  Note: Specify absolute paths (e.g., '/' or '/home/user').")
+            available = scanner.get_all_drives()
+            if available:
+                print(f"  Available drives on this system: {', '.join(available)}")
             sys.exit(1)
         drives = [os.path.abspath(args.path)]
     else:
