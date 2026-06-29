@@ -540,44 +540,61 @@ def get_ollama_model() -> str:
     if OLLAMA_MODEL:
         return OLLAMA_MODEL
 
+    models = []
+    ollama_available = False
     url = f"{OLLAMA_HOST.rstrip('/')}/api/tags"
     try:
         req = urllib.request.Request(url, headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=5) as response:
+        with urllib.request.urlopen(req, timeout=3) as response:
             data = json.loads(response.read().decode("utf-8"))
             models = data.get("models", [])
-            if not models:
-                raise ValueError("No local models found in Ollama.")
-            
-            if len(models) == 1:
+            if models:
+                ollama_available = True
+    except Exception:
+        pass
+
+    if ollama_available:
+        print("\nAvailable Ollama models:")
+        for i, m in enumerate(models, 1):
+            print(f"  {i}. {m['name']}")
+        
+        gemini_option_idx = len(models) + 1
+        clean_option_idx = gemini_option_idx + 1
+        print(f"  {gemini_option_idx}. Use Gemini API (Skip Ollama)")
+        print(f"  {clean_option_idx}. Clean generated reports")
+        
+        while True:
+            choice = input(f"Select a model (1-{clean_option_idx}) [default 1]: ").strip()
+            if not choice:
                 OLLAMA_MODEL = models[0]["name"]
                 return OLLAMA_MODEL
-            
-            print("\nAvailable Ollama models:")
-            for i, m in enumerate(models, 1):
-                print(f"  {i}. {m['name']}")
-            
-            gemini_option_idx = len(models) + 1
-            print(f"  {gemini_option_idx}. Use Gemini API (Skip Ollama)")
-            
-            while True:
-                choice = input(f"Select a model (1-{gemini_option_idx}) [default 1]: ").strip()
-                if not choice:
-                    OLLAMA_MODEL = models[0]["name"]
-                    break
-                if choice.isdigit() and 1 <= int(choice) <= gemini_option_idx:
-                    selected_idx = int(choice)
-                    if selected_idx == gemini_option_idx:
-                        OLLAMA_MODEL = "GEMINI"
-                    else:
-                        OLLAMA_MODEL = models[selected_idx-1]["name"]
-                    break
-                print("Invalid choice. Please try again.")
-            
-            return OLLAMA_MODEL
+            if choice.isdigit() and 1 <= int(choice) <= clean_option_idx:
+                selected_idx = int(choice)
+                if selected_idx == clean_option_idx:
+                    clean_reports()
+                    sys.exit(0)
+                elif selected_idx == gemini_option_idx:
+                    OLLAMA_MODEL = "GEMINI"
+                else:
+                    OLLAMA_MODEL = models[selected_idx-1]["name"]
+                return OLLAMA_MODEL
+            print("Invalid choice. Please try again.")
+    else:
+        print("\n[INFO] Local Ollama not running or has no models.")
+        print("Available options:")
+        print("  1. Use Gemini API")
+        print("  2. Clean generated reports")
+        
+        while True:
+            choice = input("Select an option (1-2) [default 1]: ").strip()
+            if not choice or choice == "1":
+                OLLAMA_MODEL = "GEMINI"
+                return OLLAMA_MODEL
+            if choice == "2":
+                clean_reports()
+                sys.exit(0)
+            print("Invalid choice. Please try again.")
 
-    except Exception as e:
-        raise RuntimeError(f"Could not connect to Ollama at {OLLAMA_HOST}: {e}")
 
 
 def ask_ollama(scan_data: dict) -> str:
