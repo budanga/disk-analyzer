@@ -1576,14 +1576,8 @@ def clean_reports():
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 def main():
-    if len(sys.argv) > 1 and sys.argv[1] in ("--clean", "clean", "-c"):
-        clean_reports()
-        sys.exit(0)
-
     print("=" * 60)
     print("  AI DISK ANALYZER")
-    print("=" * 60)
-    print("  (Run with '--clean' or 'clean' to delete generated HTML reports)")
     print("=" * 60)
 
     # Check if a model is available (either Ollama local or Gemini API)
