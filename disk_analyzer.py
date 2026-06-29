@@ -65,7 +65,29 @@ _TEMP_KEYWORDS = ("temp", "tmp", "cache", "logs")
 # Mode mask to detect symbolic links without importing stat repeatedly
 _S_ISLNK = _stat.S_ISLNK
 
+# Known storage-heavy application folders and their cleanup context
+KNOWN_APP_PATTERNS = {
+    "docker": "Docker Desktop virtual machine images, volumes, and caches. Can be cleaned up using 'docker system prune' or 'docker builder prune'.",
+    "spotify": "Spotify offline music cache. Can be safely deleted; Spotify will recreate it and re-download active songs if needed.",
+    "chrome": "Google Chrome browser cache and user data. Can be safely cleared using Chrome settings or by deleting the Cache folder.",
+    "npm-cache": "Node.js NPM global package cache. Can be cleared using the command 'npm cache clean --force'.",
+    "node_modules": "NodeJS project dependencies folder. Safe to delete (can be reinstalled with 'npm install'). Best cleaned using the 'npkill' CLI tool.",
+    "gradle": "Gradle build tool dependency cache. Safe to delete; subsequent builds will automatically re-download dependencies.",
+    "maven": "Maven local repository dependency cache (.m2). Safe to delete; Maven will re-download packages when needed.",
+    "pip": "Python pip package installer cache. Can be safely cleared using the command 'pip cache purge'.",
+    "steam": "Steam game client caches, HTML Web caches, or shader pre-caches. Safe to delete.",
+    "discord": "Discord client cache and local files. Safe to delete; Discord will recreate them on startup.",
+}
+
 # ── Helpers ────────────────────────────────────────────────────────────────────
+
+def get_app_context(path: str) -> str | None:
+    path_lower = path.lower()
+    for key, desc in KNOWN_APP_PATTERNS.items():
+        if key in path_lower:
+            return desc
+    return None
+
 
 def bytes_to_human(n: int) -> str:
     for unit in ("B", "KB", "MB", "GB", "TB"):
@@ -142,6 +164,8 @@ def _scan_subtree(
     temp_folder_sizes: defaultdict,
     big_files: list,
     ext_sizes: defaultdict,
+    all_folder_sizes: defaultdict,
+    parent_to_children: dict,
     lock: Lock,
     executor: ThreadPoolExecutor,
     futures: list,
@@ -179,6 +203,7 @@ def _scan_subtree(
     # structures once (single lock acquisition per directory visit).
     local_top_delta = 0
     local_temp_delta = 0
+    local_files_size = 0
     local_big: list[tuple[int, str]] = []
     local_ext: dict[str, int] = {}
 
@@ -210,6 +235,7 @@ def _scan_subtree(
                 continue
             sz = st.st_size
 
+            local_files_size += sz
             if top_level:
                 local_top_delta += sz
             if temp_ancestor:
@@ -224,7 +250,7 @@ def _scan_subtree(
                 local_big.append((sz, full_path))
 
     # Flush local accumulations into shared state with a single lock acquisition
-    if local_top_delta or local_temp_delta or local_big or local_ext:
+    if local_top_delta or local_temp_delta or local_big or local_ext or local_files_size or subdirs_to_visit:
         with lock:
             if top_level and local_top_delta:
                 top_level_sizes[top_level] += local_top_delta
@@ -234,6 +260,18 @@ def _scan_subtree(
                 big_files.extend(local_big)
             for ext, sz in local_ext.items():
                 ext_sizes[ext] += sz
+
+            if subdirs_to_visit:
+                parent_to_children[root_path] = subdirs_to_visit
+
+            if local_files_size > 0:
+                path = root_path
+                while True:
+                    all_folder_sizes[path] += local_files_size
+                    parent = os.path.dirname(path)
+                    if parent == path or path.lower() == drive_root.lower():
+                        break
+                    path = parent
 
     # Submit subdirectory scans to the thread pool
     for subdir in subdirs_to_visit:
@@ -245,6 +283,8 @@ def _scan_subtree(
             temp_folder_sizes,
             big_files,
             ext_sizes,
+            all_folder_sizes,
+            parent_to_children,
             lock,
             executor,
             futures,
@@ -274,6 +314,9 @@ def scan_drive(drive_root: str) -> dict:
     temp_folder_sizes: defaultdict[str, int] = defaultdict(int)
     big_files: list[tuple[int, str]] = []
     ext_sizes: defaultdict[str, int] = defaultdict(int)
+    root_files_sizes: list[tuple[str, int]] = []
+    all_folder_sizes: defaultdict[str, int] = defaultdict(int)
+    parent_to_children: dict[str, list[str]] = {}
     lock = Lock()
 
     # Use a thread pool to scan subdirectories in parallel (I/O-bound)
@@ -289,9 +332,11 @@ def scan_drive(drive_root: str) -> dict:
         except (PermissionError, OSError):
             top_entries = []
 
+        top_level_subdirs = []
         for entry in top_entries:
             if entry.is_dir(follow_symlinks=False):
                 if not should_skip(entry.path):
+                    top_level_subdirs.append(entry.path)
                     fut = executor.submit(
                         _scan_subtree,
                         entry.path,
@@ -300,6 +345,8 @@ def scan_drive(drive_root: str) -> dict:
                         temp_folder_sizes,
                         big_files,
                         ext_sizes,
+                        all_folder_sizes,
+                        parent_to_children,
                         lock,
                         executor,
                         futures,
@@ -318,8 +365,12 @@ def scan_drive(drive_root: str) -> dict:
                                 ext_sizes[ext] += sz
                                 if sz >= 50_000_000:
                                     big_files.append((sz, entry.path))
+                                root_files_sizes.append((entry.path, sz))
                     except (PermissionError, OSError):
                         pass
+
+        with lock:
+            parent_to_children[drive_root] = top_level_subdirs
 
         # Wait for all submitted futures, including those dynamically added
         # by child tasks. We loop until no new futures appear.
@@ -364,6 +415,119 @@ def scan_drive(drive_root: str) -> dict:
         ext if ext else "(no extension)": bytes_to_human(sz)
         for ext, sz in ext_sorted
     }
+
+    # Enrich folder results with App Context description
+    for folder in result["large_folders"]:
+        ctx = get_app_context(folder["path"])
+        if ctx:
+            folder["app_context"] = ctx
+
+    for folder in result["temp_folders"]:
+        ctx = get_app_context(folder["path"])
+        if ctx:
+            folder["app_context"] = ctx
+
+    # Build hierarchical sunburst data
+    # Map big files by parent directory for O(1) lookup
+    big_files_by_parent = defaultdict(list)
+    for sz, p in big_files:
+        parent = os.path.dirname(p)
+        big_files_by_parent[parent].append((p, sz))
+
+    def build_tree(current_path, min_size=50 * 1024 * 1024):
+        path_size = all_folder_sizes.get(current_path, 0)
+        is_root = current_path.lower() == drive_root.lower()
+        if is_root:
+            path_size += sum(sz for _, sz in root_files_sizes)
+
+        if path_size < min_size:
+            return None
+
+        name = current_path if is_root else os.path.basename(current_path)
+        if not name:
+            name = current_path
+
+        children = []
+        included_size = 0
+
+        # Subdirectories
+        subdirs = parent_to_children.get(current_path, [])
+        for sd in subdirs:
+            sd_size = all_folder_sizes.get(sd, 0)
+            if sd_size >= min_size:
+                child_node = build_tree(sd, min_size)
+                if child_node:
+                    children.append(child_node)
+                    included_size += sd_size
+
+        # Big files directly here
+        files_here = big_files_by_parent.get(current_path, [])
+        for fp, sz in files_here:
+            children.append({
+                "name": os.path.basename(fp),
+                "value": sz,
+                "path": fp,
+                "is_file": True
+            })
+            included_size += sz
+
+        # Root files
+        if is_root:
+            files_here_set = {f[0].lower() for f in files_here}
+            for fp, sz in root_files_sizes:
+                if fp.lower() not in files_here_set:
+                    children.append({
+                        "name": os.path.basename(fp),
+                        "value": sz,
+                        "path": fp,
+                        "is_file": True
+                    })
+                    included_size += sz
+
+        # Add "Other" node for remainder
+        remaining = path_size - included_size
+        if remaining > 1 * 1024 * 1024:  # > 1 MB
+            children.append({
+                "name": "[Other files/folders]",
+                "value": remaining,
+                "path": os.path.join(current_path, "[other]"),
+                "is_other": True
+            })
+
+        node = {
+            "name": name,
+            "path": current_path,
+            "value": path_size
+        }
+        if children:
+            node["children"] = children
+        return node
+
+    # We set a threshold of 50MB to keep the DOM footprint reasonable
+    sunburst_tree = build_tree(drive_root, min_size=50 * 1024 * 1024)
+    if not sunburst_tree:
+        sunburst_tree = {
+            "name": drive_root,
+            "path": drive_root,
+            "value": sum(sz for _, sz in root_files_sizes)
+        }
+
+    # Add System Skipped if there's significant space used but not scanned
+    total_used_bytes = int(usage.used)
+    total_scanned_bytes = sum(top_level_sizes.values()) + sum(sz for _, sz in root_files_sizes)
+    system_skipped_bytes = max(0, total_used_bytes - total_scanned_bytes)
+    if system_skipped_bytes > 50 * 1024 * 1024:  # > 50 MB
+        if "children" not in sunburst_tree:
+            sunburst_tree["children"] = []
+        sunburst_tree["children"].append({
+            "name": "System & Skipped",
+            "value": system_skipped_bytes,
+            "path": os.path.join(drive_root, "System & Skipped"),
+            "is_system": True
+        })
+        sunburst_tree["value"] += system_skipped_bytes
+
+    result["sunburst_data"] = sunburst_tree
 
     return result
 
@@ -423,24 +587,25 @@ def ask_ollama(scan_data: dict) -> str:
     model = get_ollama_model()
 
     system_instruction = """You are an expert in Windows storage optimization.
-Always respond in English. Your responses must be brief, direct, and well-structured in markdown.
-Use exactly the format requested, without adding filler text or long introductions.
+Always respond in English. Your responses must be direct and well-structured in markdown.
 Do not recommend deleting operating system files or critical Windows folders."""
 
-    user_prompt = f"""Analyze this disk report and respond VERY CONCISELY using exactly this markdown format:
+    user_prompt = f"""Analyze this disk report and respond using exactly this markdown format:
 
 ## Disk Status
 One line per disk: `LETTER:` — X GB used of Y GB (Z% free) — status (OK / Attention / Critical).
+Provide a brief 1-2 sentence diagnostic summary.
 
 ## Top 5 space saving actions
 Each action in this exact format:
 ### N. Short action title
-- **What:** description in one sentence
+- **What:** description of the action, detailing the files/folders involved
+- **Why/How:** explanation of how this space can be freed (e.g. specific tool, path, or command) and why it is safe or risky
 - **Impact:** ~X GB
 - **Safety:** ✅ Safe | ⚠️ With caution | 🔴 Manual review
 
 ## Preventive tips
-3 short bullet points, maximum one line each.
+5 actionable preventive tips to maintain disk health, each explained in 1-2 sentences.
 
 ---
 System data:
@@ -490,24 +655,25 @@ def ask_gemini(scan_data: dict) -> str:
         client = genai.Client(api_key=API_KEY)
 
         system_instruction = """You are an expert in Windows storage optimization.
-Always respond in English. Your responses must be brief, direct, and well-structured in markdown.
-Use exactly the format requested, without adding filler text or long introductions.
+Always respond in English. Your responses must be direct and well-structured in markdown.
 Do not recommend deleting operating system files or critical Windows folders."""
 
-        user_prompt = f"""Analyze this disk report and respond VERY CONCISELY using exactly this markdown format:
+        user_prompt = f"""Analyze this disk report and respond using exactly this markdown format:
 
 ## Disk Status
 One line per disk: `LETTER:` — X GB used of Y GB (Z% free) — status (OK / Attention / Critical).
+Provide a brief 1-2 sentence diagnostic summary.
 
 ## Top 5 space saving actions
 Each action in this exact format:
 ### N. Short action title
-- **What:** description in one sentence
+- **What:** description of the action, detailing the files/folders involved
+- **Why/How:** explanation of how this space can be freed (e.g. specific tool, path, or command) and why it is safe or risky
 - **Impact:** ~X GB
 - **Safety:** ✅ Safe | ⚠️ With caution | 🔴 Manual review
 
 ## Preventive tips
-3 short bullet points, maximum one line each.
+5 actionable preventive tips to maintain disk health, each explained in 1-2 sentences.
 
 ---
 System data:
@@ -563,7 +729,7 @@ def _donut_svg(pct: float, disk_label: str) -> str:
     transform="rotate(-90 {cx} {cy})"
     style="filter: drop-shadow(0 0 6px {glow});"/>
   <text x="{cx}" y="{cy}" text-anchor="middle" dominant-baseline="central"
-    fill="{colour}" font-family="Inter,sans-serif" font-size="18" font-weight="700">{pct:.0f}%</text>
+    fill="{colour}" font-family="'Plus Jakarta Sans',sans-serif" font-size="18" font-weight="700">{pct:.0f}%</text>
 </svg>"""
 
 
@@ -666,6 +832,49 @@ def _disk_section(disk: dict) -> str:
 
   <!-- Disk body -->
   <div id="body-{uid}" class="divide-y divide-white/5">
+
+    <!-- Visual Space Distribution (Sunburst) -->
+    <details open class="group">
+      <summary class="flex items-center gap-2 px-6 py-3 cursor-pointer hover:bg-white/5 transition">
+        <span class="text-lg">🍩</span>
+        <span class="font-semibold text-on-surface">Visual Space Distribution (Sunburst)</span>
+        <span class="ml-auto material-symbols-outlined text-on-surface-variant group-open:rotate-180 transition-transform">expand_more</span>
+      </summary>
+      <div class="px-6 py-6 bg-white/[0.01] flex flex-col md:flex-row items-center justify-around gap-6">
+        <!-- Sunburst Chart container -->
+        <div class="flex flex-col items-center w-full md:w-1/2">
+          <!-- Breadcrumbs path indicator -->
+          <div id="sunburst-breadcrumbs-{uid}" class="text-xs font-mono text-on-surface-variant/80 bg-white/5 px-3 py-1.5 rounded-full mb-4 w-full text-center overflow-x-auto whitespace-nowrap scrollbar-thin">
+            Click a segment to drill down
+          </div>
+          <div id="sunburst-{uid}" class="w-full flex justify-center" style="min-height: 380px;"></div>
+        </div>
+        <!-- Detail Panel -->
+        <div id="sunburst-details-{uid}" class="w-full md:w-1/3 glass-card rounded-xl p-6 flex flex-col justify-center min-h-[220px]">
+          <h3 class="text-xs uppercase tracking-wider text-on-surface-variant font-semibold mb-2">Hovered Element</h3>
+          <div class="space-y-3">
+            <div>
+              <span class="text-xs text-on-surface-variant/70 block">Name / Path</span>
+              <span id="sb-detail-name-{uid}" class="font-semibold text-sm text-primary break-all">-</span>
+            </div>
+            <div class="grid grid-cols-2 gap-4">
+              <div>
+                <span class="text-xs text-on-surface-variant/70 block">Size</span>
+                <span id="sb-detail-size-{uid}" class="font-mono text-base font-bold text-on-surface">-</span>
+              </div>
+              <div>
+                <span class="text-xs text-on-surface-variant/70 block">Percentage of parent</span>
+                <span id="sb-detail-pct-{uid}" class="font-mono text-base font-bold text-secondary">-</span>
+              </div>
+            </div>
+            <div>
+              <span class="text-xs text-on-surface-variant/70 block">Type</span>
+              <span id="sb-detail-type-{uid}" class="text-xs font-mono bg-white/10 px-2 py-0.5 rounded text-on-surface-variant inline-block">-</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </details>
 
     <!-- Large folders -->
     <details open class="group">
@@ -929,6 +1138,9 @@ def save_report(scan_data: dict, recommendations: str, output_path: str) -> str:
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     hostname = _esc(scan_data.get("sistema", "—"))
 
+    import json
+    discos_json = json.dumps(scan_data["discos"], ensure_ascii=False)
+
     # ── Summary cards (one per disk) ───────────────────────────────────────────
     summary_cards = []
     for disk in scan_data["discos"]:
@@ -965,8 +1177,9 @@ def save_report(scan_data: dict, recommendations: str, output_path: str) -> str:
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>AI Disk Analyzer — Report</title>
 <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
 <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+<script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
 <script id="tailwind-config">
 tailwind.config = {{
   darkMode: "class",
@@ -988,7 +1201,7 @@ tailwind.config = {{
       }},
       fontFamily: {{
         "mono": ["JetBrains Mono", "monospace"],
-        "sans": ["Inter", "system-ui", "sans-serif"]
+        "sans": ["Plus Jakarta Sans", "system-ui", "sans-serif"]
       }}
     }}
   }}
@@ -996,7 +1209,7 @@ tailwind.config = {{
 </script>
 <style>
   * {{ -webkit-font-smoothing: antialiased; }}
-  body {{ background-color:#0d1117; color:#dfe2eb; font-family:Inter,sans-serif; }}
+  body {{ background-color:#0d1117; color:#dfe2eb; font-family:'Plus Jakarta Sans',sans-serif; }}
 
   .glass-card {{
     background: rgba(30,41,59,0.5);
@@ -1065,19 +1278,6 @@ tailwind.config = {{
       <p class="font-mono text-xs" style="color:#8c909f">Report generated on {ts}</p>
     </div>
   </div>
-  <div class="flex items-center gap-4">
-    <div class="flex items-center gap-2 px-3 py-1 rounded-full" style="background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1)">
-      <span class="material-symbols-outlined text-xs" style="color:#8c909f;font-size:14px">computer</span>
-      <span class="font-mono text-xs font-semibold text-white">{hostname}</span>
-    </div>
-    <div class="flex items-center gap-2">
-      <span class="relative flex h-2.5 w-2.5">
-        <span class="ping absolute inline-flex h-full w-full rounded-full opacity-75" style="background:#4edea3"></span>
-        <span class="relative inline-flex rounded-full h-2.5 w-2.5" style="background:#4edea3"></span>
-      </span>
-      <span class="text-xs font-mono" style="color:#4edea3">Analysis complete</span>
-    </div>
-  </div>
 </header>
 
 <!-- ══════════════════ MAIN ══════════════════ -->
@@ -1095,7 +1295,7 @@ tailwind.config = {{
   <div class="ai-card glass-card p-8 fade-in-up delay-400" style="background:rgba(20,20,35,0.7)">
     <div class="flex items-center gap-3 mb-6">
       <span class="text-3xl">✨</span>
-      <h2 class="text-xl font-bold" style="color:#d0bcff">Gemini AI Recommendations</h2>
+      <h2 class="text-xl font-bold" style="color:#d0bcff">AI Recommendations</h2>
     </div>
     <div class="space-y-1 leading-relaxed">{ai_html}</div>
   </div>
@@ -1103,8 +1303,15 @@ tailwind.config = {{
 </main>
 
 <!-- ══════════════════ FOOTER ══════════════════ -->
-<footer class="text-center py-6" style="border-top:1px solid rgba(255,255,255,0.05)">
-  <p class="font-mono text-xs" style="color:#424754">Generated by disk_analyzer.py with Gemini AI</p>
+<footer class="flex flex-col items-center justify-center gap-2 py-6" style="border-top:1px solid rgba(255,255,255,0.05)">
+  <a href="https://github.com/budanga/disk-analyzer" target="_blank" rel="noopener noreferrer" 
+     class="flex items-center gap-1.5 text-xs text-white/40 hover:text-white transition-colors" title="View Source on GitHub">
+    <svg class="h-4 w-4 fill-current" viewBox="0 0 16 16">
+      <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path>
+    </svg>
+    <span>GitHub Repository</span>
+  </a>
+  <p class="font-mono text-[10px]" style="color:#424754">Generated by disk_analyzer.py with AI</p>
 </footer>
 
 <script>
@@ -1133,6 +1340,183 @@ function toggleSection(uid) {{
   body.style.display  = hidden ? '' : 'none';
   arrow.style.transform = hidden ? '' : 'rotate(-90deg)';
 }}
+
+// ── Render Sunbursts using D3.js ──
+const formatBytes = (bytes) => {{
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}};
+
+const discos = {discos_json};
+discos.forEach(disk => {{
+  const uid = disk.root.replace(/\\\\/g, "").replace(/:/g, "").replace(/\\//g, "");
+  const container = document.getElementById('sunburst-' + uid);
+  if (!container || !disk.sunburst_data) return;
+
+  const data = disk.sunburst_data;
+
+  const width = 380;
+  const height = 380;
+  const radius = width / 6;
+
+  const colorScale = d3.scaleOrdinal(d3.quantize(d3.interpolateRainbow, 12));
+  
+  const color = (d) => {{
+    if (d.data.is_system) return '#ef4444';
+    if (d.data.is_other) return '#4b5563';
+    if (d.data.is_file) return '#10b981';
+    if (d.depth === 0) return 'rgba(255,255,255,0.05)';
+    if (d.depth === 1) return colorScale(d.data.name);
+    return d3.hsl(color(d.parent)).brighter(0.4);
+  }};
+
+  const partition = data => {{
+    const root = d3.hierarchy(data)
+        .sum(d => d.value)
+        .sort((a, b) => b.value - a.value);
+    return d3.partition()
+        .size([2 * Math.PI, root.height + 1])(root);
+  }};
+
+  const root = partition(data);
+  root.each(d => d.current = d);
+
+  const svg = d3.select(container)
+    .append("svg")
+    .attr("viewBox", [0, 0, width, height])
+    .style("font", "10px sans-serif");
+
+  const g = svg.append("g")
+    .attr("transform", `translate(${{width / 2}},${{height / 2}})`);
+
+  const arc = d3.arc()
+    .startAngle(d => d.x0)
+    .endAngle(d => d.x1)
+    .padAngle(d => Math.min((d.x1 - d.x0) / 2, 0.005))
+    .padRadius(radius * 1.5)
+    .innerRadius(d => d.y0 * radius)
+    .outerRadius(d => Math.max(d.y0 * radius, d.y1 * radius - 1));
+
+  const path = g.append("g")
+    .selectAll("path")
+    .data(root.descendants())
+    .join("path")
+      .attr("fill", d => color(d))
+      .attr("fill-opacity", d => d.children ? 0.8 : 0.5)
+      .attr("pointer-events", d => d.value > 0 ? "auto" : "none")
+      .attr("d", d => arc(d.current));
+
+  path.style("cursor", d => (d.children || d === root) ? "pointer" : "default");
+
+  const detailName = document.getElementById('sb-detail-name-' + uid);
+  const detailSize = document.getElementById('sb-detail-size-' + uid);
+  const detailPct = document.getElementById('sb-detail-pct-' + uid);
+  const detailType = document.getElementById('sb-detail-type-' + uid);
+  const breadcrumbs = document.getElementById('sunburst-breadcrumbs-' + uid);
+
+  let focusRoot = root;
+  updateDetails(root);
+
+  path.on("click", (event, d) => {{
+    if (d === focusRoot) {{
+      if (focusRoot.parent) {{
+        clicked(event, focusRoot.parent);
+      }}
+    }} else if (d.children) {{
+      clicked(event, d);
+    }}
+  }});
+
+  path.on("mouseenter", (event, d) => {{
+    d3.select(event.currentTarget)
+      .attr("fill-opacity", 1)
+      .attr("stroke", "#fff")
+      .attr("stroke-width", 1.5);
+    updateDetails(d);
+  }});
+
+  path.on("mouseleave", (event, d) => {{
+    d3.select(event.currentTarget)
+      .attr("fill-opacity", d => d.children ? 0.8 : 0.5)
+      .attr("stroke", null);
+    updateDetails(focusRoot);
+  }});
+
+  function updateDetails(d) {{
+    if (!d) return;
+    
+    let nodePath = d.data.path;
+    detailName.textContent = nodePath;
+    detailSize.textContent = formatBytes(d.value);
+    
+    let pctParent = 100;
+    if (d.parent) {{
+      pctParent = ((d.value / d.parent.value) * 100).toFixed(1);
+    }}
+    detailPct.textContent = pctParent + "%";
+
+    let typeLabel = "Folder";
+    if (d.data.is_file) typeLabel = "File";
+    else if (d.data.is_system) typeLabel = "System/Skipped";
+    else if (d.data.is_other) typeLabel = "Other Items";
+    else if (d.depth === 0) typeLabel = "Drive Root";
+    detailType.textContent = typeLabel;
+
+    const ancestors = d.ancestors().reverse();
+    breadcrumbs.innerHTML = "";
+    ancestors.forEach((anc, index) => {{
+      const span = document.createElement("span");
+      span.className = "hover:text-primary transition-colors cursor-pointer";
+      span.textContent = anc.data.name;
+      span.onclick = (e) => {{
+        e.stopPropagation();
+        clicked(null, anc);
+      }};
+      breadcrumbs.appendChild(span);
+      if (index < ancestors.length - 1) {{
+        const separator = document.createElement("span");
+        separator.className = "mx-1.5 text-on-surface-variant/40";
+        separator.textContent = "›";
+        breadcrumbs.appendChild(separator);
+      }}
+    }});
+  }}
+
+  function clicked(event, p) {{
+    focusRoot = p;
+    updateDetails(p);
+
+    root.each(d => d.target = {{
+      x0: Math.max(0, Math.min(1, (d.x0 - p.x0) / (p.x1 - p.x0))) * 2 * Math.PI,
+      x1: Math.max(0, Math.min(1, (d.x1 - p.x0) / (p.x1 - p.x0))) * 2 * Math.PI,
+      y0: Math.max(0, d.y0 - p.y0),
+      y1: Math.max(0, d.y1 - p.y0)
+    }});
+
+    const t = g.transition().duration(750);
+
+    path.transition(t)
+        .tween("data", d => {{
+          const i = d3.interpolate(d.current, d.target);
+          return t => d.current = i(t);
+        }})
+        .filter(function(d) {{
+          return +this.getAttribute("fill-opacity") || arcVisible(d.target);
+        }})
+        .attr("fill-opacity", d => arcVisible(d.target) ? (d.children ? 0.8 : 0.5) : 0)
+        .attr("pointer-events", d => arcVisible(d.target) ? "auto" : "none")
+        .attrTween("d", d => () => arc(d.current));
+
+    path.style("cursor", d => (d.children || d === p) ? "pointer" : "default");
+  }}
+
+  function arcVisible(d) {{
+    return d.y0 >= 0 && d.y1 <= 3 && d.x1 > d.x0;
+  }}
+}});
 </script>
 </body>
 </html>"""
