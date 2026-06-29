@@ -3,8 +3,27 @@ import sys
 import json
 import urllib.request
 import urllib.error
+from pydantic import BaseModel, Field
+from typing import List
 
 import config
+
+class DiskStatusItem(BaseModel):
+    drive: str = Field(description="Drive letter, e.g., 'C:'")
+    summary: str = Field(description="Brief summary including usage stats and status, e.g., 'C: — 85 GB used of 120 GB (29.1% free) — OK. System drive is in good health.'")
+    level: str = Field(description="Status level: OK, WARNING, or CRITICAL")
+
+class ActionItem(BaseModel):
+    title: str = Field(description="Short action title")
+    what: str = Field(description="Description of what files/folders are involved")
+    why_how: str = Field(description="How to perform this cleanup safely")
+    impact: str = Field(description="Estimated space reclaimed, e.g., '15.2 GB'")
+    safety: str = Field(description="Safety level: Safe, Caution, or Danger")
+
+class Recommendations(BaseModel):
+    disk_status: List[DiskStatusItem]
+    actions: List[ActionItem]
+    preventive_tips: List[str]
 
 
 def get_ollama_model() -> str:
@@ -71,30 +90,14 @@ def get_ollama_model() -> str:
 
 def _get_ai_instructions(scan_data: dict) -> tuple[str, str]:
     system_instruction = """You are an expert in Windows storage optimization.
-Always respond in English. Your responses must be direct, starting directly with the first section header "## Disk Status" without any introductory greeting, preamble, or chatty conversational filler.
-Strictly adhere to the requested markdown formatting. Do not recommend deleting operating system files or critical Windows folders."""
+Always respond in English. Your responses must be a structured JSON object matching the requested schema.
+Do not recommend deleting operating system files or critical Windows folders."""
 
-    user_prompt = f"""Analyze this disk report and respond using exactly this markdown format:
+    user_prompt = f"""Analyze this disk report and recommend space-saving actions:
+- Provide status for each drive scanned.
+- List up to 5 space saving recommendations. Only recommend actions that have a meaningful impact relative to the disk size. If all folders/files are small (e.g. less than 10 GB or under 1% of disk size), list fewer recommendations (1 or 2), and recommend general system actions (like Windows Disk Cleanup, Storage Sense, or web browser cache clearing) rather than presenting small folders as major space-saving actions.
+- Provide 5 actionable preventive tips to maintain disk health.
 
-## Disk Status
-One line per disk: `LETTER:` — X GB used of Y GB (Z% free) — status (OK / Attention / Critical).
-Provide a brief 1-2 sentence diagnostic summary.
-
-## Top space saving actions
-List up to 5 space saving recommendations.
-IMPORTANT: Only recommend actions that have a meaningful impact relative to the disk size. If all available folders/files in the scan report are small (e.g. less than 10 GB or under 1% of disk size), list fewer recommendations (1 or 2), and recommend general system actions (like Windows Disk Cleanup 'cleanmgr', Storage Sense, or web browser cache clearing) rather than presenting small 1-5 GB folders as major space-saving action cards.
-
-Each action must use this EXACT markdown format (use '###' for the header, do not use '####' or any other header level):
-### N. Short action title
-- **What:** description of the action, detailing the files/folders involved
-- **Why/How:** explanation of how this space can be freed (e.g. specific tool, path, or command) and why it is safe or risky
-- **Impact:** ~X GB
-- **Safety:** ✅ Safe | ⚠️ With caution | 🔴 Manual review
-
-## Preventive tips
-5 actionable preventive tips to maintain disk health, each explained in 1-2 sentences.
-
----
 System data:
 {json.dumps(scan_data, ensure_ascii=False, indent=2)}
 """
@@ -104,6 +107,7 @@ System data:
 def ask_ollama(scan_data: dict) -> str:
     model = get_ollama_model()
     system_instruction, user_prompt = _get_ai_instructions(scan_data)
+    user_prompt += f"\nReturn a JSON object matching this schema:\n{json.dumps(Recommendations.model_json_schema(), indent=2)}"
 
     url = f"{config.OLLAMA_HOST.rstrip('/')}/api/chat"
     payload = {
@@ -112,6 +116,7 @@ def ask_ollama(scan_data: dict) -> str:
             {"role": "system", "content": system_instruction},
             {"role": "user", "content": user_prompt}
         ],
+        "format": "json",
         "options": {
             "temperature": 0.2
         },
@@ -153,6 +158,8 @@ def ask_gemini(scan_data: dict) -> str:
             config=types.GenerateContentConfig(
                 system_instruction=system_instruction,
                 temperature=0.2,
+                response_mime_type="application/json",
+                response_schema=Recommendations,
             ),
         )
         return response.text

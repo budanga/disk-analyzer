@@ -17,6 +17,7 @@ def main():
     parser.add_argument("--no-ai", action="store_true", help="Skip AI recommendations entirely.")
     parser.add_argument("--model", "-m", help="AI model to use ('gemini' or a local Ollama model name). Bypasses interactive selection.")
     parser.add_argument("--clean", action="store_true", help="Delete all generated HTML reports from reports directory and exit.")
+    parser.add_argument("--export", choices=["json", "csv"], help="Export scan data to JSON or CSV format and save it in the reports directory.")
     args = parser.parse_args()
 
     if args.clean:
@@ -105,26 +106,64 @@ def main():
         disk_copy = {k: v for k, v in disk.items() if k != "sunburst_data"}
         ai_scan_data["discos"].append(disk_copy)
 
-    recommendations = ""
+    recommendations = {}
     if args.no_ai:
         recommendations = "AI Recommendations were disabled via command-line option."
     elif ollama_ok:
         try:
-            recommendations = ai.ask_ollama(ai_scan_data)
+            raw_rec = ai.ask_ollama(ai_scan_data)
+            recommendations = json.loads(raw_rec)
         except Exception as e:
-            print(f"\n[WARNING] Failed to query Ollama: {e}")
+            print(f"\n[WARNING] Failed to query Ollama or parse JSON: {e}")
             if config.API_KEY != "YOUR_API_KEY_HERE":
                 print("Falling back to Gemini API...")
-                recommendations = ai.ask_gemini(ai_scan_data)
+                try:
+                    raw_rec = ai.ask_gemini(ai_scan_data)
+                    recommendations = json.loads(raw_rec)
+                except Exception as ge:
+                    recommendations = f"Failed to retrieve or parse Gemini recommendations: {ge}"
             else:
                 recommendations = "Could not retrieve local Ollama recommendations due to an error, and Gemini API is not configured."
     else:
-        recommendations = ai.ask_gemini(ai_scan_data)
+        try:
+            raw_rec = ai.ask_gemini(ai_scan_data)
+            recommendations = json.loads(raw_rec)
+        except Exception as e:
+            recommendations = f"Failed to retrieve or parse Gemini recommendations: {e}"
 
     # Save HTML report and open in the browser
     script_dir = os.path.dirname(os.path.abspath(__file__))
     reports_dir = os.path.join(script_dir, "disk-analyzer-reports")
     os.makedirs(reports_dir, exist_ok=True)
+
+    # Export data if requested
+    if args.export:
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        if args.export == "json":
+            import json
+            output_json = os.path.join(reports_dir, f"disk_scan_{timestamp}.json")
+            with open(output_json, "w", encoding="utf-8") as jf:
+                json.dump(scan_data, jf, ensure_ascii=False, indent=2)
+            print(f"[OK] Exported JSON data to: {output_json}")
+        elif args.export == "csv":
+            import csv
+            output_csv = os.path.join(reports_dir, f"disk_scan_{timestamp}.csv")
+            with open(output_csv, "w", newline="", encoding="utf-8") as cf:
+                writer = csv.writer(cf)
+                writer.writerow(["Drive", "Type", "Path", "Size"])
+                for disk in scan_data["discos"]:
+                    drive = disk["root"]
+                    writer.writerow([drive, "Usage", "Used Space", f"{disk['used_gb']} GB / {disk['total_gb']} GB ({disk['use_pct']}%)"])
+                    for folder in disk.get("large_folders", []):
+                        writer.writerow([drive, "Folder", folder["path"], folder["size"]])
+                    for file in disk.get("large_files", []):
+                        writer.writerow([drive, "File", file["path"], file["size"]])
+                    for temp in disk.get("temp_folders", []):
+                        writer.writerow([drive, "Temp/Cache", temp["path"], temp["size"]])
+                    for ext, sz in disk.get("by_extension", {}).items():
+                        writer.writerow([drive, "Extension", ext, sz])
+            print(f"[OK] Exported CSV data to: {output_csv}")
+
     output_file = os.path.join(
         reports_dir,
         f"disk_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"

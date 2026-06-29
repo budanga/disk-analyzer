@@ -45,18 +45,17 @@ def _donut_svg(pct: float, disk_label: str) -> str:
 </svg>"""
 
 
-def _table_rows(items: list, key_path: str = "path", key_size: str = "size",
-               amber: bool = False) -> str:
+def _table_rows(items: list, key_path='path', key_size='size', amber=False) -> str:
     if not items:
         return '<tr><td colspan="3" class="px-4 py-3 text-center text-on-surface-variant text-sm">No data</td></tr>'
     rows = []
     for i, item in enumerate(items, 1):
         bg = "background:rgba(251,191,36,0.07);" if amber else ""
         rows.append(
-            f'<tr class="data-table-row border-b border-white/5" style="{bg}">'
+            f'<tr class="data-table-row border-b border-outline-variant/10" style="{bg}">'
             f'<td class="px-4 py-2 text-on-surface-variant font-mono text-xs w-8">{i}</td>'
             f'<td class="px-4 py-2 font-mono text-xs text-on-surface truncate max-w-lg" title="{_esc(item[key_path])}">{_esc(item[key_path])}</td>'
-            f'<td class="px-4 py-2 font-mono text-xs text-right whitespace-nowrap" style="color:#adc6ff">{_esc(item[key_size])}</td>'
+            f'<td class="px-4 py-2 font-mono text-xs text-right whitespace-nowrap" style="color:var(--color-primary)">{_esc(item[key_size])}</td>'
             f'</tr>'
         )
     return "\n".join(rows)
@@ -92,10 +91,10 @@ def _bar_chart(ext_dict: dict) -> str:
         bars.append(
             f'<div class="flex items-center gap-3 py-1">'
             f'<span class="font-mono text-xs text-on-surface-variant w-24 text-right shrink-0">{_esc(ext)}</span>'
-            f'<div class="flex-1 h-3 rounded-full overflow-hidden" style="background:rgba(255,255,255,0.06)">'
+            f'<div class="flex-1 h-3 rounded-full overflow-hidden bg-surface-container-high">'
             f'<div class="bar-chart-fill h-full rounded-full" style="background:{grad};width:0" data-width="{width_pct:.1f}%"></div>'
             f'</div>'
-            f'<span class="font-mono text-xs w-20 text-right shrink-0" style="color:#adc6ff">{_esc(sz)}</span>'
+            f'<span class="font-mono text-xs w-20 text-right shrink-0" style="color:var(--color-primary)">{_esc(sz)}</span>'
             f'</div>'
         )
     return "\n".join(bars)
@@ -123,10 +122,10 @@ def _disk_section(disk: dict) -> str:
 <!-- ═══ DRIVE {label} ═══ -->
 <section class="fade-in-up delay-200 glass-card rounded-xl overflow-hidden">
   <!-- Disk header -->
-  <div class="flex items-center justify-between px-6 py-4 border-b border-white/10 cursor-pointer"
+  <div class="flex items-center justify-between px-6 py-4 border-b border-outline-variant/20 cursor-pointer"
        onclick="toggleSection('{uid}')" id="hdr-{uid}">
     <div class="flex items-center gap-4">
-      <span class="material-symbols-outlined" style="color:#adc6ff;font-size:28px">hard_drive_2</span>
+      <span class="material-symbols-outlined text-primary" style="font-size:28px">hard_drive_2</span>
       <div>
         <h2 class="font-mono font-bold text-xl text-on-surface">{label}</h2>
         <div class="flex gap-4 mt-1">
@@ -143,20 +142,20 @@ def _disk_section(disk: dict) -> str:
   </div>
 
   <!-- Disk body -->
-  <div id="body-{uid}" class="divide-y divide-white/5">
+  <div id="body-{uid}" class="divide-y divide-outline-variant/10">
 
     <!-- Visual Space Distribution (Sunburst) -->
     <details open class="group">
-      <summary class="flex items-center gap-2 px-6 py-3 cursor-pointer hover:bg-white/5 transition">
+      <summary class="flex items-center gap-2 px-6 py-3 cursor-pointer hover:bg-surface-variant/20 transition">
         <span class="text-lg">🍩</span>
         <span class="font-semibold text-on-surface">Visual Space Distribution (Sunburst)</span>
         <span class="ml-auto material-symbols-outlined text-on-surface-variant group-open:rotate-180 transition-transform">expand_more</span>
       </summary>
-      <div class="px-6 py-6 bg-white/[0.01] flex flex-col md:flex-row items-center justify-around gap-6">
+      <div class="px-6 py-6 bg-surface-container/10 flex flex-col md:flex-row items-center justify-around gap-6">
         <!-- Sunburst Chart container -->
         <div class="flex flex-col items-center w-full md:w-1/2">
           <!-- Breadcrumbs path indicator -->
-          <div id="sunburst-breadcrumbs-{uid}" class="text-xs font-mono text-on-surface-variant/80 bg-white/5 px-3 py-1.5 rounded-full mb-4 w-full text-center overflow-x-auto whitespace-nowrap scrollbar-thin">
+          <div id="sunburst-breadcrumbs-{uid}" class="text-xs font-mono text-on-surface-variant/80 bg-surface-variant/30 px-3 py-1.5 rounded-full mb-4 w-full text-center overflow-x-auto whitespace-nowrap scrollbar-thin">
             Click a segment to drill down
           </div>
           <div id="sunburst-{uid}" class="w-full flex justify-center" style="min-height: 380px;"></div>
@@ -181,7 +180,7 @@ def _disk_section(disk: dict) -> str:
             </div>
             <div>
               <span class="text-xs text-on-surface-variant/70 block">Type</span>
-              <span id="sb-detail-type-{uid}" class="text-xs font-mono bg-white/10 px-2 py-0.5 rounded text-on-surface-variant inline-block">-</span>
+              <span id="sb-detail-type-{uid}" class="text-xs font-mono bg-surface-variant/20 px-2 py-0.5 rounded text-on-surface-variant inline-block">-</span>
             </div>
           </div>
         </div>
@@ -190,14 +189,14 @@ def _disk_section(disk: dict) -> str:
 
     <!-- Large folders -->
     <details open class="group">
-      <summary class="flex items-center gap-2 px-6 py-3 cursor-pointer hover:bg-white/5 transition">
+      <summary class="flex items-center gap-2 px-6 py-3 cursor-pointer hover:bg-surface-variant/20 transition">
         <span class="text-lg">📁</span>
         <span class="font-semibold text-on-surface">Largest Folders</span>
         <span class="ml-auto material-symbols-outlined text-on-surface-variant group-open:rotate-180 transition-transform">expand_more</span>
       </summary>
       <div class="overflow-x-auto">
         <table class="w-full text-sm">
-          <thead><tr class="text-left text-on-surface-variant text-xs uppercase tracking-wider border-b border-white/10">
+          <thead><tr class="text-left text-on-surface-variant text-xs uppercase tracking-wider border-b border-outline-variant/20">
             <th class="px-4 py-2">#</th><th class="px-4 py-2">Path</th><th class="px-4 py-2 text-right">Size</th>
           </tr></thead>
           <tbody>{folders_html}</tbody>
@@ -207,14 +206,14 @@ def _disk_section(disk: dict) -> str:
 
     <!-- Large files -->
     <details class="group">
-      <summary class="flex items-center gap-2 px-6 py-3 cursor-pointer hover:bg-white/5 transition">
+      <summary class="flex items-center gap-2 px-6 py-3 cursor-pointer hover:bg-surface-variant/20 transition">
         <span class="text-lg">📄</span>
         <span class="font-semibold text-on-surface">Largest Files (≥50 MB)</span>
         <span class="ml-auto material-symbols-outlined text-on-surface-variant group-open:rotate-180 transition-transform">expand_more</span>
       </summary>
       <div class="overflow-x-auto">
         <table class="w-full text-sm">
-          <thead><tr class="text-left text-on-surface-variant text-xs uppercase tracking-wider border-b border-white/10">
+          <thead><tr class="text-left text-on-surface-variant text-xs uppercase tracking-wider border-b border-outline-variant/20">
             <th class="px-4 py-2">#</th><th class="px-4 py-2">Path</th><th class="px-4 py-2 text-right">Size</th>
           </tr></thead>
           <tbody>{files_html}</tbody>
@@ -224,14 +223,14 @@ def _disk_section(disk: dict) -> str:
 
     <!-- Temp/cache -->
     <details class="group">
-      <summary class="flex items-center gap-2 px-6 py-3 cursor-pointer hover:bg-white/5 transition">
+      <summary class="flex items-center gap-2 px-6 py-3 cursor-pointer hover:bg-surface-variant/20 transition">
         <span class="text-lg">🗑️</span>
         <span class="font-semibold text-on-surface">Detected Temp/Cache Folders</span>
         <span class="ml-auto material-symbols-outlined text-on-surface-variant group-open:rotate-180 transition-transform">expand_more</span>
       </summary>
       <div class="overflow-x-auto">
         <table class="w-full text-sm">
-          <thead><tr class="text-left text-on-surface-variant text-xs uppercase tracking-wider border-b border-white/10">
+          <thead><tr class="text-left text-on-surface-variant text-xs uppercase tracking-wider border-b border-outline-variant/20">
             <th class="px-4 py-2">#</th><th class="px-4 py-2">Path</th><th class="px-4 py-2 text-right">Size</th>
           </tr></thead>
           <tbody>{temp_html}</tbody>
@@ -241,7 +240,7 @@ def _disk_section(disk: dict) -> str:
 
     <!-- By extension -->
     <details class="group">
-      <summary class="flex items-center gap-2 px-6 py-3 cursor-pointer hover:bg-white/5 transition">
+      <summary class="flex items-center gap-2 px-6 py-3 cursor-pointer hover:bg-surface-variant/20 transition">
         <span class="text-lg">📊</span>
         <span class="font-semibold text-on-surface">Space by Extension (Top 15)</span>
         <span class="ml-auto material-symbols-outlined text-on-surface-variant group-open:rotate-180 transition-transform">expand_more</span>
@@ -253,169 +252,108 @@ def _disk_section(disk: dict) -> str:
 </section>"""
 
 
-def _format_recommendations(text: str) -> str:
+def _format_recommendations(recommendations) -> str:
     """
-    Structured markdown-to-HTML renderer tailored to the Gemini prompt format:
-      ## Disk Status            → chip row
-      ## Top 5 …                → section heading
-      ### N. Title              → numbered action card
-      - **Key:** value          → key-value rows inside a card
-      ## Preventive Tips        → tips list
-      ---                       → ignored divider
+    Structured JSON-to-HTML or markdown-to-HTML fallback recommendations renderer.
     """
-    # ── inline formatting helpers ──────────────────────────────────────────────
+    # Inline formatting helper
     def _inline(s: str) -> str:
         s = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', s)
         s = re.sub(r'\*(.+?)\*',     r'<em>\1</em>',         s)
         s = re.sub(r'`(.+?)`',       r'<code>\1</code>',     s)
-        # Replace safety emoji text with coloured badges
-        s = s.replace('✅ Safe',          '<span class="safety-badge safe">✅ Safe</span>')
-        s = s.replace('⚠️ With caution', '<span class="safety-badge warn">⚠️ With Caution</span>')
-        s = s.replace('🔴 Manual review', '<span class="safety-badge danger">🔴 Manual Review</span>')
         return s
 
-    # ── parse the text into a list of (kind, content) tokens ──────────────────
-    tokens: list[tuple[str, str]] = []
-    for raw in text.split('\n'):
-        line = raw.strip()
-        if not line or line == '---':
-            continue
-        if re.match(r'^##\s', line):                      # H2 section
-            tokens.append(('h2', re.sub(r'^##\s*', '', line)))
-        elif re.match(r'^###+\s', line):                  # H3+ action card title
-            tokens.append(('h3', re.sub(r'^###+\s*', '', line)))
-        elif re.match(r'^[-*]\s', line):                  # bullet
-            tokens.append(('li', line[2:]))
-        else:                                              # plain paragraph
-            tokens.append(('p', line))
+    out = []
 
-    # ── render tokens into HTML ────────────────────────────────────────────────
-    out: list[str] = []
-    i = 0
-    in_action_card = False   # track whether we're inside a ### card
-    in_tips_list   = False   # track tips bullet list
-    current_section = ''
+    # If recommendations is a string (e.g. error, fallback, or no-ai message)
+    if isinstance(recommendations, str):
+        out.append(f'<p class="rec-p text-on-surface-variant">{_esc(recommendations)}</p>')
+    else:
+        # Otherwise, parse it as a structured dictionary!
+        # 1. Disk Status
+        status_list = recommendations.get("disk_status", [])
+        if status_list:
+            out.append('<div class="mb-6">')
+            out.append('<h2 class="rec-h2">Disk Status</h2>')
+            out.append('<div class="disk-chips">')
+            for item in status_list:
+                lvl = item.get("level", "OK").upper()
+                cl = "chip-ok"
+                if "WARN" in lvl:
+                    cl = "chip-warn"
+                elif "CRIT" in lvl:
+                    cl = "chip-danger"
+                summary = _inline(_esc(item.get("summary", "")))
+                out.append(f'<div class="disk-chip {cl}">{summary}</div>')
+            out.append('</div></div>')
 
-    def _close_card():
-        nonlocal in_action_card
-        if in_action_card:
-            out.append('</dl></div>')
-            in_action_card = False
+        # 2. Actions
+        actions_list = recommendations.get("actions", [])
+        if actions_list:
+            out.append('<h2 class="rec-h2 mt-6">Top space saving actions</h2>')
+            for idx, act in enumerate(actions_list, 1):
+                safety = act.get("safety", "Safe")
+                safety_badge = ""
+                if "Safe" in safety:
+                    safety_badge = '<span class="safety-badge safe">✅ Safe</span>'
+                elif "Caution" in safety:
+                    safety_badge = '<span class="safety-badge warn">⚠️ With Caution</span>'
+                elif "Danger" in safety:
+                    safety_badge = '<span class="safety-badge danger">🔴 Manual Review</span>'
+                else:
+                    safety_badge = f'<span class="safety-badge warn">{_esc(safety)}</span>'
+                    
+                title = _inline(_esc(act.get("title", "")))
+                what = _inline(_esc(act.get("what", "")))
+                why_how = _inline(_esc(act.get("why_how", "")))
+                impact = _inline(_esc(act.get("impact", "")))
+                
+                out.append(
+                    f'<div class="action-card">'
+                    f'<div class="action-title"><span class="action-num">{idx}</span><span>{title}</span></div>'
+                    f'<dl class="action-body">'
+                    f'<div class="action-row"><dt>What</dt><dd>{what}</dd></div>'
+                    f'<div class="action-row"><dt>Why/How</dt><dd>{why_how}</dd></div>'
+                    f'<div class="action-row"><dt>Impact</dt><dd>{impact}</dd></div>'
+                    f'<div class="action-row"><dt>Safety</dt><dd>{safety_badge}</dd></div>'
+                    f'</dl></div>'
+                )
 
-    def _close_tips():
-        nonlocal in_tips_list
-        if in_tips_list:
+        # 3. Preventive tips
+        tips_list = recommendations.get("preventive_tips", [])
+        if tips_list:
+            out.append('<h2 class="rec-h2 mt-6">Preventive tips</h2>')
+            out.append('<ul class="tips-list">')
+            for tip in tips_list:
+                out.append(f'<li>{_inline(_esc(tip))}</li>')
             out.append('</ul>')
-            in_tips_list = False
 
-    while i < len(tokens):
-        kind, content = tokens[i]
-
-        if kind == 'h2':
-            _close_card()
-            _close_tips()
-            current_section = content.lower()
-
-            if 'status' in current_section or 'estado' in current_section:
-                # Collect the disk status lines that follow as chip rows
-                out.append('<div class="mb-6">')
-                out.append(f'<h2 class="rec-h2">{_inline(content)}</h2>')
-                out.append('<div class="disk-chips">')
-                i += 1
-                while i < len(tokens) and tokens[i][0] == 'p':
-                    chip_text = _inline(tokens[i][1])
-                    # colour chip border based on status keyword
-                    cl = 'chip-ok'
-                    if 'attention' in tokens[i][1].lower() or 'atenci' in tokens[i][1].lower() or 'warn' in tokens[i][1].lower():
-                        cl = 'chip-warn'
-                    elif 'critical' in tokens[i][1].lower() or 'crít' in tokens[i][1].lower() or 'crit' in tokens[i][1].lower():
-                        cl = 'chip-danger'
-                    out.append(f'<div class="disk-chip {cl}">{chip_text}</div>')
-                    i += 1
-                out.append('</div></div>')
-                continue
-            else:
-                # Generic H2 (Top 5 / Tips)
-                out.append(f'<h2 class="rec-h2 mt-6">{_inline(content)}</h2>')
-
-        elif kind == 'h3':
-            _close_card()
-            _close_tips()
-            # Extract leading number if present: "1. Title" or "#1. Title"
-            m = re.match(r'^#?(\d+)[\.\:]?\s*(.*)', content)
-            if m:
-                num, title = m.group(1), m.group(2)
-            else:
-                num, title = '', content
-            num_html = f'<span class="action-num">{num}</span>' if num else ''
-            out.append(
-                f'<div class="action-card">'
-                f'<div class="action-title">{num_html}<span>{_inline(title)}</span></div>'
-                f'<dl class="action-body">'
-            )
-            in_action_card = True
-
-        elif kind == 'li':
-            if in_action_card:
-                # Key-value bullet inside an action card: "**Key:** value"
-                kv = re.match(r'\*\*(.+?)\*\*[:\s]+(.*)', content)
-                if kv:
-                    key, val = kv.group(1), _inline(kv.group(2))
-                    out.append(f'<div class="action-row"><dt>{key}</dt><dd>{val}</dd></div>')
-                else:
-                    out.append(f'<div class="action-row"><dd>{_inline(content)}</dd></div>')
-            else:
-                # Tips or generic bullets
-                _close_card()
-                if not in_tips_list:
-                    out.append('<ul class="tips-list">')
-                    in_tips_list = True
-                out.append(f'<li>{_inline(content)}</li>')
-
-        elif kind == 'p':
-            if in_action_card:
-                # Inside action card, support both key-value text (e.g. "Path: C:\XboxGames") and general text
-                kv = re.match(r'^([\w\s\/]+?)\s*:\s+(.*)', content)
-                if kv:
-                    key, val = kv.group(1), _inline(kv.group(2))
-                    out.append(f'<div class="action-row"><dt>{key}</dt><dd>{val}</dd></div>')
-                else:
-                    out.append(f'<div class="action-row"><dd>{_inline(content)}</dd></div>')
-            else:
-                _close_tips()
-                out.append(f'<p class="rec-p">{_inline(content)}</p>')
-
-        i += 1
-
-    _close_card()
-    _close_tips()
-
-    # ── Inject scoped styles ───────────────────────────────────────────────────
+    # Scoped styles
     styles = """
 <style>
 .rec-h2 {
   font-size:1rem; font-weight:700; letter-spacing:.05em; text-transform:uppercase;
-  color:#adc6ff; margin-bottom:.75rem; padding-bottom:.4rem;
-  border-bottom:1px solid rgba(173,198,255,.15);
+  color:var(--color-primary); margin-bottom:.75rem; padding-bottom:.4rem;
+  border-bottom:1px solid var(--color-outline-variant);
 }
 .disk-chips { display:flex; flex-wrap:wrap; gap:.5rem; }
 .disk-chip {
   font-family:'JetBrains Mono',monospace; font-size:.75rem;
   padding:.35rem .75rem; border-radius:9999px;
-  background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.1);
-  color:#dfe2eb;
+  background:var(--color-surface-container); border:1px solid var(--color-outline-variant);
+  color:var(--color-on-surface);
 }
 .chip-ok     { border-color:rgba(78,222,163,.4);  color:#4edea3; }
 .chip-warn   { border-color:rgba(251,191,36,.4);  color:#fbbf24; }
 .chip-danger { border-color:rgba(248,113,113,.4); color:#f87171; }
  
 .action-card {
-  background:rgba(255,255,255,.03); border:1px solid rgba(255,255,255,.07);
+  background:var(--color-surface-container); border:1px solid var(--color-outline-variant);
   border-radius:.75rem; padding:1rem 1.25rem; margin-bottom:.75rem;
 }
 .action-title {
   display:flex; align-items:center; gap:.6rem;
-  font-weight:600; font-size:.95rem; color:#dfe2eb; margin-bottom:.6rem;
+  font-weight:600; font-size:.95rem; color:var(--color-on-surface); margin-bottom:.6rem;
 }
 .action-num {
   display:inline-flex; align-items:center; justify-content:center;
@@ -427,15 +365,15 @@ def _format_recommendations(text: str) -> str:
 .action-row { display:flex; gap:.5rem; align-items:baseline; font-size:.8rem; }
 .action-row dt {
   font-family:'JetBrains Mono',monospace; font-weight:600;
-  color:#8c909f; white-space:nowrap; min-width:4.5rem;
+  color:var(--color-on-surface-variant); white-space:nowrap; min-width:4.5rem;
 }
-.action-row dd { color:#c2c6d6; margin:0; }
+.action-row dd { color:var(--color-on-surface-variant); margin:0; }
 code {
   font-family:'JetBrains Mono',monospace;
-  background:rgba(255,255,255,.06);
+  background:var(--color-surface-container-high);
   padding:.15rem .3rem;
   border-radius:.25rem;
-  color:#adc6ff;
+  color:var(--color-primary);
   font-size:.85em;
 }
  
@@ -451,10 +389,10 @@ code {
   list-style:none; padding:0; display:flex; flex-direction:column; gap:.4rem;
 }
 .tips-list li {
-  font-size:.82rem; color:#c2c6d6; padding:.35rem .75rem;
-  border-left:2px solid rgba(173,198,255,.3);
+  font-size:.82rem; color:var(--color-on-surface-variant); padding:.35rem .75rem;
+  border-left:2px solid var(--color-primary);
 }
-.rec-p { font-size:.85rem; color:#8c909f; margin:.25rem 0; }
+.rec-p { font-size:.85rem; color:var(--color-on-surface-variant); margin:.25rem 0; }
 </style>
 """
     return styles + '\n'.join(out)

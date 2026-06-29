@@ -1,4 +1,6 @@
 import os
+import sys
+import time
 import shutil
 import platform
 import stat as _stat
@@ -102,6 +104,7 @@ def _scan_subtree(
     lock: Lock,
     executor: ThreadPoolExecutor,
     futures: list,
+    progress_data: dict,
 ) -> None:
     """
     Recursively scan *root_path* using os.scandir.
@@ -206,6 +209,20 @@ def _scan_subtree(
                         break
                     path = parent
 
+    # Always increment folders scanned and update progress
+    with lock:
+        progress_data["folders"] += 1
+        progress_data["bytes"] += local_files_size
+        
+        now = time.time()
+        if now - progress_data["last_update"] >= 0.1:
+            progress_data["last_update"] = now
+            sys.stdout.write(
+                f"\r  Scanning... [{progress_data['folders']:,} folders | "
+                f"{bytes_to_human(progress_data['bytes'])} scanned]"
+            )
+            sys.stdout.flush()
+
     # Submit subdirectory scans to the thread pool
     for subdir in subdirs_to_visit:
         fut = executor.submit(
@@ -221,6 +238,7 @@ def _scan_subtree(
             lock,
             executor,
             futures,
+            progress_data,
         )
         with lock:
             futures.append(fut)
@@ -228,7 +246,7 @@ def _scan_subtree(
 
 def scan_drive(drive_root: str) -> dict:
     """Scans a drive and collects metrics in a single pass."""
-    print(f"\n  Scanning {drive_root} ...", flush=True)
+    print(f"\n  Scanning {drive_root} ...", end="", flush=True)
 
     usage = shutil.disk_usage(drive_root)
     result = {
@@ -251,6 +269,12 @@ def scan_drive(drive_root: str) -> dict:
     all_folder_sizes: defaultdict[str, int] = defaultdict(int)
     parent_to_children: dict[str, list[str]] = {}
     lock = Lock()
+
+    progress_data = {
+        "folders": 0,
+        "bytes": 0,
+        "last_update": 0.0,
+    }
 
     # Use a thread pool to scan subdirectories in parallel (I/O-bound)
     # We cap at 32 workers; more threads rarely help beyond SSD queue depth.
@@ -283,6 +307,7 @@ def scan_drive(drive_root: str) -> dict:
                         lock,
                         executor,
                         futures,
+                        progress_data,
                     )
                     futures.append(fut)
             else:
@@ -320,6 +345,11 @@ def scan_drive(drive_root: str) -> dict:
                 except Exception:
                     pass  # Individual subtree errors are silently skipped
             seen = len(current)
+
+    # Clear progress line and print completion
+    sys.stdout.write("\r" + " " * 80 + "\r")
+    sys.stdout.write(f"  Scanning {drive_root} ... [OK]\n")
+    sys.stdout.flush()
 
     # Select hotspots (largest folders at any depth that don't have a single dominant subdirectory)
     all_folders = sorted(all_folder_sizes.items(), key=lambda x: x[1], reverse=True)
