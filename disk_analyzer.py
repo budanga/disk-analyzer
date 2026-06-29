@@ -388,13 +388,30 @@ def scan_drive(drive_root: str) -> dict:
                     pass  # Individual subtree errors are silently skipped
             seen = len(current)
 
-    # Sort and process results
-    sorted_top_folders = sorted(top_level_sizes.items(), key=lambda x: x[1], reverse=True)
-    result["large_folders"] = [
-        {"path": p, "size": bytes_to_human(s)}
-        for p, s in sorted_top_folders[:TOP_N_FOLDERS]
-        if s >= MIN_FOLDER_SIZE_MB * 1e6
-    ]
+    # Select hotspots (largest folders at any depth that don't have a single dominant subdirectory)
+    all_folders = sorted(all_folder_sizes.items(), key=lambda x: x[1], reverse=True)
+    hotspots = []
+    for path, size in all_folders:
+        if size < MIN_FOLDER_SIZE_MB * 1e6:
+            continue
+        # Avoid including the drive root itself
+        if path.lower() == drive_root.lower():
+            continue
+            
+        # If any subdirectory of `path` is > 80% of `size`, it is the dominant child.
+        # This makes `path` redundant.
+        has_dominant_child = False
+        subdirs = parent_to_children.get(path, [])
+        for sd in subdirs:
+            sd_size = all_folder_sizes.get(sd, 0)
+            if sd_size > 0.8 * size:
+                has_dominant_child = True
+                break
+                
+        if not has_dominant_child:
+            hotspots.append({"path": path, "size": bytes_to_human(size)})
+            
+    result["large_folders"] = hotspots[:TOP_N_FOLDERS]
 
     big_files.sort(reverse=True)
     result["large_files"] = [
@@ -604,8 +621,8 @@ def ask_ollama(scan_data: dict) -> str:
     model = get_ollama_model()
 
     system_instruction = """You are an expert in Windows storage optimization.
-Always respond in English. Your responses must be direct and well-structured in markdown.
-Do not recommend deleting operating system files or critical Windows folders."""
+Always respond in English. Your responses must be direct, starting directly with the first section header "## Disk Status" without any introductory greeting, preamble, or chatty conversational filler.
+Strictly adhere to the requested markdown formatting. Do not recommend deleting operating system files or critical Windows folders."""
 
     user_prompt = f"""Analyze this disk report and respond using exactly this markdown format:
 
@@ -613,8 +630,11 @@ Do not recommend deleting operating system files or critical Windows folders."""
 One line per disk: `LETTER:` — X GB used of Y GB (Z% free) — status (OK / Attention / Critical).
 Provide a brief 1-2 sentence diagnostic summary.
 
-## Top 5 space saving actions
-Each action in this exact format:
+## Top space saving actions
+List up to 5 space saving recommendations.
+IMPORTANT: Only recommend actions that have a meaningful impact relative to the disk size. If all available folders/files in the scan report are small (e.g. less than 10 GB or under 1% of disk size), list fewer recommendations (1 or 2), and recommend general system actions (like Windows Disk Cleanup 'cleanmgr', Storage Sense, or web browser cache clearing) rather than presenting small 1-5 GB folders as major space-saving action cards.
+
+Each action must use this EXACT markdown format (use '###' for the header, do not use '####' or any other header level):
 ### N. Short action title
 - **What:** description of the action, detailing the files/folders involved
 - **Why/How:** explanation of how this space can be freed (e.g. specific tool, path, or command) and why it is safe or risky
@@ -648,7 +668,7 @@ System data:
         data=json.dumps(payload).encode("utf-8"),
         headers={"Content-Type": "application/json"}
     )
-    with urllib.request.urlopen(req, timeout=120) as response:
+    with urllib.request.urlopen(req, timeout=300) as response:
         resp_data = json.loads(response.read().decode("utf-8"))
         message = resp_data.get("message", {})
         content = message.get("content", "")
@@ -672,8 +692,8 @@ def ask_gemini(scan_data: dict) -> str:
         client = genai.Client(api_key=API_KEY)
 
         system_instruction = """You are an expert in Windows storage optimization.
-Always respond in English. Your responses must be direct and well-structured in markdown.
-Do not recommend deleting operating system files or critical Windows folders."""
+Always respond in English. Your responses must be direct, starting directly with the first section header "## Disk Status" without any introductory greeting, preamble, or chatty conversational filler.
+Strictly adhere to the requested markdown formatting. Do not recommend deleting operating system files or critical Windows folders."""
 
         user_prompt = f"""Analyze this disk report and respond using exactly this markdown format:
 
@@ -681,8 +701,11 @@ Do not recommend deleting operating system files or critical Windows folders."""
 One line per disk: `LETTER:` — X GB used of Y GB (Z% free) — status (OK / Attention / Critical).
 Provide a brief 1-2 sentence diagnostic summary.
 
-## Top 5 space saving actions
-Each action in this exact format:
+## Top space saving actions
+List up to 5 space saving recommendations.
+IMPORTANT: Only recommend actions that have a meaningful impact relative to the disk size. If all available folders/files in the scan report are small (e.g. less than 10 GB or under 1% of disk size), list fewer recommendations (1 or 2), and recommend general system actions (like Windows Disk Cleanup 'cleanmgr', Storage Sense, or web browser cache clearing) rather than presenting small 1-5 GB folders as major space-saving action cards.
+
+Each action must use this EXACT markdown format (use '###' for the header, do not use '####' or any other header level):
 ### N. Short action title
 - **What:** description of the action, detailing the files/folders involved
 - **Why/How:** explanation of how this space can be freed (e.g. specific tool, path, or command) and why it is safe or risky
@@ -974,6 +997,7 @@ def _format_recommendations(text: str) -> str:
     def _inline(s: str) -> str:
         s = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', s)
         s = re.sub(r'\*(.+?)\*',     r'<em>\1</em>',         s)
+        s = re.sub(r'`(.+?)`',       r'<code>\1</code>',     s)
         # Replace safety emoji text with coloured badges
         s = s.replace('✅ Safe',          '<span class="safety-badge safe">✅ Safe</span>')
         s = s.replace('⚠️ With caution', '<span class="safety-badge warn">⚠️ With Caution</span>')
@@ -988,8 +1012,8 @@ def _format_recommendations(text: str) -> str:
             continue
         if re.match(r'^##\s', line):                      # H2 section
             tokens.append(('h2', re.sub(r'^##\s*', '', line)))
-        elif re.match(r'^###\s', line):                   # H3 action card title
-            tokens.append(('h3', re.sub(r'^###\s*', '', line)))
+        elif re.match(r'^###+\s', line):                  # H3+ action card title (matches ### or ####)
+            tokens.append(('h3', re.sub(r'^###+\s*', '', line)))
         elif re.match(r'^[-*]\s', line):                  # bullet
             tokens.append(('li', line[2:]))
         else:                                              # plain paragraph
@@ -1047,8 +1071,8 @@ def _format_recommendations(text: str) -> str:
         elif kind == 'h3':
             _close_card()
             _close_tips()
-            # Extract leading number if present: "1. Title"
-            m = re.match(r'^(\d+)\.\s*(.*)', content)
+            # Extract leading number if present: "1. Title" or "#1. Title"
+            m = re.match(r'^#?(\d+)[\.\:]?\s*(.*)', content)
             if m:
                 num, title = m.group(1), m.group(2)
             else:
@@ -1079,9 +1103,17 @@ def _format_recommendations(text: str) -> str:
                 out.append(f'<li>{_inline(content)}</li>')
 
         elif kind == 'p':
-            _close_card()
-            _close_tips()
-            out.append(f'<p class="rec-p">{_inline(content)}</p>')
+            if in_action_card:
+                # Inside action card, support both key-value text (e.g. "Path: C:\XboxGames") and general text
+                kv = re.match(r'^([\w\s\/]+?)\s*:\s+(.*)', content)
+                if kv:
+                    key, val = kv.group(1), _inline(kv.group(2))
+                    out.append(f'<div class="action-row"><dt>{key}</dt><dd>{val}</dd></div>')
+                else:
+                    out.append(f'<div class="action-row"><dd>{_inline(content)}</dd></div>')
+            else:
+                _close_tips()
+                out.append(f'<p class="rec-p">{_inline(content)}</p>')
 
         i += 1
 
@@ -1128,6 +1160,14 @@ def _format_recommendations(text: str) -> str:
   color:#8c909f; white-space:nowrap; min-width:4.5rem;
 }
 .action-row dd { color:#c2c6d6; margin:0; }
+code {
+  font-family:'JetBrains Mono',monospace;
+  background:rgba(255,255,255,.06);
+  padding:.15rem .3rem;
+  border-radius:.25rem;
+  color:#adc6ff;
+  font-size:.85em;
+}
 
 .safety-badge {
   display:inline-block; font-size:.72rem; font-weight:600;
@@ -1392,7 +1432,7 @@ discos.forEach(disk => {{
 
   const partition = data => {{
     const root = d3.hierarchy(data)
-        .sum(d => d.value)
+        .sum(d => d.children && d.children.length > 0 ? 0 : d.value)
         .sort((a, b) => b.value - a.value);
     return d3.partition()
         .size([2 * Math.PI, root.height + 1])(root);
@@ -1633,19 +1673,29 @@ def main():
         "discos": all_disks,
     }
 
+    # Create a copy of scan_data without the huge sunburst_data for the AI
+    ai_scan_data = {
+        "system": scan_data["system"],
+        "analysis_date": scan_data["analysis_date"],
+        "discos": []
+    }
+    for disk in scan_data["discos"]:
+        disk_copy = {k: v for k, v in disk.items() if k != "sunburst_data"}
+        ai_scan_data["discos"].append(disk_copy)
+
     recommendations = ""
     if ollama_ok:
         try:
-            recommendations = ask_ollama(scan_data)
+            recommendations = ask_ollama(ai_scan_data)
         except Exception as e:
             print(f"\n[WARNING] Failed to query Ollama: {e}")
             if API_KEY != "YOUR_API_KEY_HERE":
                 print("Falling back to Gemini API...")
-                recommendations = ask_gemini(scan_data)
+                recommendations = ask_gemini(ai_scan_data)
             else:
                 recommendations = "Could not retrieve local Ollama recommendations due to an error, and Gemini API is not configured."
     else:
-        recommendations = ask_gemini(scan_data)
+        recommendations = ask_gemini(ai_scan_data)
 
     # Save HTML report and open in the browser
     script_dir = os.path.dirname(os.path.abspath(__file__))
