@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>AI Disk Analyzer — Report</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+<script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+<script id="tailwind-config">
+tailwind.config = {
+  darkMode: "class",
+  theme: {
+    extend: {
+      colors: {
+        "surface":               "#10141a",
+        "surface-container":     "#1c2026",
+        "surface-container-high":"#262a31",
+        "surface-variant":       "#31353c",
+        "on-surface":            "#dfe2eb",
+        "on-surface-variant":    "#c2c6d6",
+        "outline-variant":       "#424754",
+        "primary":               "#adc6ff",
+        "primary-container":     "#4d8eff",
+        "secondary":             "#d0bcff",
+        "tertiary":              "#4edea3",
+        "background":            "#0d1117"
+      },
+      fontFamily: {
+        "mono": ["JetBrains Mono", "monospace"],
+        "sans": ["Plus Jakarta Sans", "system-ui", "sans-serif"]
+      }
+    }
+  }
+};
+</script>
+<style>
+  * { -webkit-font-smoothing: antialiased; }
+  body { background-color:#0d1117; color:#dfe2eb; font-family:'Plus Jakarta Sans',sans-serif; }
+
+  .glass-card {
+    background: rgba(30,41,59,0.5);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    border: 1px solid rgba(255,255,255,0.08);
+  }
+
+  /* Shimmer border for AI card */
+  .ai-card { position:relative; border-radius:0.75rem; z-index:0; }
+  .ai-card::before {
+    content:"";
+    position:absolute; inset:-1px;
+    border-radius:inherit; padding:1px;
+    background: linear-gradient(90deg,#3b82f6,#8b5cf6,#ec4899,#8b5cf6,#3b82f6);
+    background-size: 300% auto;
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    animation: shimmer 4s linear infinite;
+    z-index:-1;
+  }
+  @keyframes shimmer { to { background-position: 300% 50%; } }
+
+  /* Fade-in entrance */
+  .fade-in-up {
+    opacity:0;
+    transform:translateY(20px);
+    animation: fadeInUp 0.6s cubic-bezier(0.16,1,0.3,1) forwards;
+  }
+  @keyframes fadeInUp { to { opacity:1; transform:translateY(0); } }
+  .delay-100 { animation-delay:100ms; }
+  .delay-200 { animation-delay:200ms; }
+  .delay-300 { animation-delay:300ms; }
+  .delay-400 { animation-delay:400ms; }
+
+  /* Donut ring animation triggered by JS */
+  .donut-ring { transition: stroke-dashoffset 1.5s cubic-bezier(0.4,0,0.2,1); }
+
+  /* Bar chart animated fill */
+  .bar-chart-fill { transition: width 1.2s cubic-bezier(0.4,0,0.2,1); }
+
+  /* Table rows */
+  .data-table-row { transition: background-color 150ms ease; }
+  .data-table-row:hover { background: rgba(255,255,255,0.04); }
+
+  /* Pulsing dot */
+  @keyframes ping { 75%,100% { transform:scale(2); opacity:0; } }
+  .ping { animation: ping 1.5s cubic-bezier(0,0,0.2,1) infinite; }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width:6px; height:6px; }
+  ::-webkit-scrollbar-track { background:transparent; }
+  ::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.15); border-radius:3px; }
+</style>
+</head>
+<body class="min-h-screen">
+
+<!-- ══════════════════ HEADER ══════════════════ -->
+<header class="sticky top-0 z-50 flex justify-between items-center px-8 py-3"
+        style="background:rgba(13,17,23,0.85);backdrop-filter:blur(24px);border-bottom:1px solid rgba(255,255,255,0.07)">
+  <div class="flex items-center gap-3">
+    <span class="material-symbols-outlined" style="color:#adc6ff;font-size:30px">hard_drive</span>
+    <div>
+      <h1 class="font-bold text-xl text-white leading-tight">AI Disk Analyzer</h1>
+      <p class="font-mono text-xs" style="color:#8c909f">Report generated on {{TIMESTAMP}}</p>
+    </div>
+  </div>
+</header>
+
+<!-- ══════════════════ MAIN ══════════════════ -->
+<main class="max-w-7xl mx-auto px-6 pb-16 pt-8 space-y-8">
+
+  <!-- Summary row -->
+  <div class="grid gap-6" style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr))">
+    {{SUMMARY_CARDS}}
+  </div>
+
+  <!-- Per-disk sections -->
+  {{DISK_SECTIONS}}
+
+  <!-- ── AI Recommendations ── -->
+  <div class="ai-card glass-card p-8 fade-in-up delay-400" style="background:rgba(20,20,35,0.7)">
+    <div class="flex items-center gap-3 mb-6">
+      <span class="text-3xl">✨</span>
+      <h2 class="text-xl font-bold" style="color:#d0bcff">AI Recommendations</h2>
+    </div>
+    <div class="space-y-1 leading-relaxed">{{AI_RECOMMENDATIONS}}</div>
+  </div>
+
+</main>
+
+<!-- ══════════════════ FOOTER ══════════════════ -->
+<footer class="flex flex-col items-center justify-center gap-2 py-6" style="border-top:1px solid rgba(255,255,255,0.05)">
+  <a href="https://github.com/budanga/disk-analyzer" target="_blank" rel="noopener noreferrer" 
+     class="flex items-center gap-1.5 text-xs text-white/40 hover:text-white transition-colors" title="View Source on GitHub">
+    <svg class="h-4 w-4 fill-current" viewBox="0 0 16 16">
+      <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path>
+    </svg>
+    <span>GitHub Repository</span>
+  </a>
+  <p class="font-mono text-[10px]" style="color:#424754">Generated by disk_analyzer.py with AI</p>
+</footer>
+
+<script>
+// ── Animate donut rings on load ──
+document.querySelectorAll('.donut-svg').forEach(svg => {
+  const ring = svg.querySelector('.donut-ring');
+  const target = parseFloat(svg.dataset.target);
+  const circ   = parseFloat(svg.dataset.circ);
+  requestAnimationFrame(() => {
+    setTimeout(() => { ring.style.strokeDashoffset = (circ - target).toFixed(2); }, 100);
+  });
+});
+
+// ── Animate bar chart fills on load ──
+document.querySelectorAll('.bar-chart-fill').forEach(bar => {
+  requestAnimationFrame(() => {
+    setTimeout(() => { bar.style.width = bar.dataset.width; }, 200);
+  });
+});
+
+// ── Toggle disk section body ──
+function toggleSection(uid) {
+  const body  = document.getElementById('body-' + uid);
+  const arrow = document.getElementById('arrow-' + uid);
+  const hidden = body.style.display === 'none';
+  body.style.display  = hidden ? '' : 'none';
+  arrow.style.transform = hidden ? '' : 'rotate(-90deg)';
+}
+
+// ── Render Sunbursts using D3.js ──
+const formatBytes = (bytes) => {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+};
+
+const discos = {{DISCOS_JSON}};
+discos.forEach(disk => {
+  const uid = disk.root.replace(/\\/g, "").replace(/:/g, "").replace(/\//g, "");
+  const container = document.getElementById('sunburst-' + uid);
+  if (!container || !disk.sunburst_data) return;
+
+  const data = disk.sunburst_data;
+
+  const width = 380;
+  const height = 380;
+  const radius = width / 6;
+
+  const colorScale = d3.scaleOrdinal(d3.quantize(d3.interpolateRainbow, 12));
+  
+  const color = (d) => {
+    if (d.data.is_system) return '#ef4444';
+    if (d.data.is_other) return '#4b5563';
+    if (d.data.is_file) return '#10b981';
+    if (d.depth === 0) return 'rgba(255,255,255,0.05)';
+    if (d.depth === 1) return colorScale(d.data.name);
+    return d3.hsl(color(d.parent)).brighter(0.4);
+  };
+
+  const partition = data => {
+    const root = d3.hierarchy(data)
+        .sum(d => d.children && d.children.length > 0 ? 0 : d.value)
+        .sort((a, b) => b.value - a.value);
+    return d3.partition()
+        .size([2 * Math.PI, root.height + 1])(root);
+  };
+
+  const root = partition(data);
+  root.each(d => d.current = d);
+
+  const svg = d3.select(container)
+    .append("svg")
+    .attr("viewBox", [0, 0, width, height])
+    .style("font", "10px sans-serif");
+
+  const g = svg.append("g")
+    .attr("transform", `translate(${width / 2},${height / 2})`);
+
+  const arc = d3.arc()
+    .startAngle(d => d.x0)
+    .endAngle(d => d.x1)
+    .padAngle(d => Math.min((d.x1 - d.x0) / 2, 0.005))
+    .padRadius(radius * 1.5)
+    .innerRadius(d => d.y0 * radius)
+    .outerRadius(d => Math.max(d.y0 * radius, d.y1 * radius - 1));
+
+  const path = g.append("g")
+    .selectAll("path")
+    .data(root.descendants())
+    .join("path")
+      .attr("fill", d => color(d))
+      .attr("fill-opacity", d => d.children ? 0.8 : 0.5)
+      .attr("pointer-events", d => d.value > 0 ? "auto" : "none")
+      .attr("d", d => arc(d.current));
+
+  path.style("cursor", d => (d.children || d === root) ? "pointer" : "default");
+
+  const detailName = document.getElementById('sb-detail-name-' + uid);
+  const detailSize = document.getElementById('sb-detail-size-' + uid);
+  const detailPct = document.getElementById('sb-detail-pct-' + uid);
+  const detailType = document.getElementById('sb-detail-type-' + uid);
+  const breadcrumbs = document.getElementById('sunburst-breadcrumbs-' + uid);
+
+  let focusRoot = root;
+  updateDetails(root);
+
+  path.on("click", (event, d) => {
+    if (d === focusRoot) {
+      if (focusRoot.parent) {
+        clicked(event, focusRoot.parent);
+      }
+    } else if (d.children) {
+      clicked(event, d);
+    }
+  });
+
+  path.on("mouseenter", (event, d) => {
+    d3.select(event.currentTarget)
+      .attr("fill-opacity", 1)
+      .attr("stroke", "#fff")
+      .attr("stroke-width", 1.5);
+    updateDetails(d);
+  });
+
+  path.on("mouseleave", (event, d) => {
+    d3.select(event.currentTarget)
+      .attr("fill-opacity", d => d.children ? 0.8 : 0.5)
+      .attr("stroke", null);
+    updateDetails(focusRoot);
+  });
+
+  function updateDetails(d) {
+    if (!d) return;
+    
+    let nodePath = d.data.path;
+    detailName.textContent = nodePath;
+    detailSize.textContent = formatBytes(d.value);
+    
+    let pctParent = 100;
+    if (d.parent) {
+      pctParent = ((d.value / d.parent.value) * 100).toFixed(1);
+    }
+    detailPct.textContent = pctParent + "%";
+
+    let typeLabel = "Folder";
+    if (d.data.is_file) typeLabel = "File";
+    else if (d.data.is_system) typeLabel = "System/Skipped";
+    else if (d.data.is_other) typeLabel = "Other Items";
+    else if (d.depth === 0) typeLabel = "Drive Root";
+    detailType.textContent = typeLabel;
+
+    const ancestors = d.ancestors().reverse();
+    breadcrumbs.innerHTML = "";
+    ancestors.forEach((anc, index) => {
+      const span = document.createElement("span");
+      span.className = "hover:text-primary transition-colors cursor-pointer";
+      span.textContent = anc.data.name;
+      span.onclick = (e) => {
+        e.stopPropagation();
+        clicked(null, anc);
+      };
+      breadcrumbs.appendChild(span);
+      if (index < ancestors.length - 1) {
+        const separator = document.createElement("span");
+        separator.className = "mx-1.5 text-on-surface-variant/40";
+        separator.textContent = "›";
+        breadcrumbs.appendChild(separator);
+      }
+    });
+  }
+
+  function clicked(event, p) {
+    focusRoot = p;
+    updateDetails(p);
+
+    root.each(d => d.target = {
+      x0: Math.max(0, Math.min(1, (d.x0 - p.x0) / (p.x1 - p.x0))) * 2 * Math.PI,
+      x1: Math.max(0, Math.min(1, (d.x1 - p.x0) / (p.x1 - p.x0))) * 2 * Math.PI,
+      y0: Math.max(0, d.y0 - p.y0),
+      y1: Math.max(0, d.y1 - p.y0)
+    });
+
+    const t = g.transition().duration(750);
+
+    path.transition(t)
+        .tween("data", d => {
+          const i = d3.interpolate(d.current, d.target);
+          return t => d.current = i(t);
+        })
+        .filter(function(d) {
+          return +this.getAttribute("fill-opacity") || arcVisible(d.target);
+        })
+        .attr("fill-opacity", d => arcVisible(d.target) ? (d.children ? 0.8 : 0.5) : 0)
+        .attr("pointer-events", d => arcVisible(d.target) ? "auto" : "none")
+        .attrTween("d", d => () => arc(d.current));
+
+    path.style("cursor", d => (d.children || d === p) ? "pointer" : "default");
+  }
+
+  function arcVisible(d) {
+    return d.y0 >= 0 && d.y1 <= 3 && d.x1 > d.x0;
+  }
+});
+</script>
+</body>
+</html>
