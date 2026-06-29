@@ -1,5 +1,6 @@
 import os
 import sys
+import json
 import platform
 import webbrowser
 from datetime import datetime, timezone
@@ -162,7 +163,6 @@ def main():
     if args.export:
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         if args.export == "json":
-            import json
             output_json = os.path.join(reports_dir, f"disk_scan_{timestamp}.json")
             with open(output_json, "w", encoding="utf-8") as jf:
                 json.dump(scan_data, jf, ensure_ascii=False, indent=2)
