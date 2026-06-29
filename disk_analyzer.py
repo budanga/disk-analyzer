@@ -14,6 +14,7 @@ def main():
     import argparse
     parser = argparse.ArgumentParser(description="AI Disk Analyzer — Scan storage and get AI recommendations.")
     parser.add_argument("--path", "-p", help="Specific directory or drive root to scan (defaults to all drives).")
+    parser.add_argument("--drives", "-d", nargs="+", help="Scan only these specific drives or paths (e.g. --drives C:\\ D:\\).")
     parser.add_argument("--no-ai", action="store_true", help="Skip AI recommendations entirely.")
     parser.add_argument("--model", "-m", help="AI model to use ('gemini' or a local Ollama model name). Bypasses interactive selection.")
     parser.add_argument("--clean", action="store_true", help="Delete all generated HTML reports from reports directory and exit.")
@@ -54,7 +55,14 @@ def main():
             print("  - To use Gemini, edit config.py to replace YOUR_API_KEY_HERE, or set the GEMINI_API_KEY environment variable.")
             sys.exit(1)
 
-    if args.path:
+    if args.drives:
+        drives = []
+        for d in args.drives:
+            if not os.path.exists(d):
+                print(f"\n[ERROR] The specified drive/path does not exist: {d}")
+                sys.exit(1)
+            drives.append(os.path.abspath(d))
+    elif args.path:
         if not os.path.exists(args.path):
             print(f"\n[ERROR] The specified path does not exist: {args.path}")
             sys.exit(1)
